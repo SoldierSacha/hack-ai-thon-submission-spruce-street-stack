@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "langdetect>=1.0.9",
     "streamlit>=1.33",
+    "streamlit-mic-recorder>=0.0.8",
     "tenacity>=8.2",
 ]
 
