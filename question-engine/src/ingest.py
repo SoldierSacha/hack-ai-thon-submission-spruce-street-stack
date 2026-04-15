@@ -1,7 +1,8 @@
 import json, math, re
+from datetime import datetime
 from pathlib import Path
 import pandas as pd
-from src.models import Property
+from src.models import Property, Review, RatingBreakdown
 
 AMENITY_COLS = [c for c in [
     "accessibility", "activities_nearby", "business_services", "conveniences",
@@ -56,3 +57,30 @@ def load_properties(path: str | Path) -> list[Property]:
             know_before_you_go=_clean_text(row.get("know_before_you_go")),
         ))
     return props
+
+def _parse_rating_json(v) -> dict:
+    if not isinstance(v, str): return {}
+    try: return json.loads(v)
+    except json.JSONDecodeError:
+        try: return json.loads(v.replace("'", '"'))
+        except json.JSONDecodeError: return {}
+
+def _parse_acquisition_date(v: str):
+    # Format: M/D/YY (e.g. "9/9/25")
+    return datetime.strptime(v.strip(), "%m/%d/%y").date()
+
+def load_reviews(path: str | Path) -> list[Review]:
+    df = pd.read_csv(path)
+    reviews = []
+    for i, row in df.iterrows():
+        rating = RatingBreakdown.from_raw(_parse_rating_json(row.get("rating")))
+        reviews.append(Review(
+            review_id=f"{row['eg_property_id']}:{i}",
+            eg_property_id=row["eg_property_id"],
+            acquisition_date=_parse_acquisition_date(str(row["acquisition_date"])),
+            lob=_nan_to_none(row.get("lob")),
+            rating=rating,
+            review_title=_clean_text(row.get("review_title")),
+            review_text_orig=_clean_text(row.get("review_text")),
+        ))
+    return reviews
