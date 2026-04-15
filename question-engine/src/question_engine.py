@@ -102,3 +102,90 @@ def build(
     print("[build] aggregating field states...")
     n = build_all_field_states(repo, taxonomy_yaml)
     print(f"[build] wrote {n} field states")
+
+
+def run_ask(property_id: str, review_text: str, today_override: str | None = None) -> None:
+    """
+    Submit a review, show the follow-up question(s), read typed answers on stdin, persist.
+    Press Enter (empty) to skip.
+    """
+    from datetime import date
+    from src.db import Repo
+    from src.llm import LlmClient
+    from src.taxonomy import load_taxonomy
+    from src.ranker import build_field_cluster_map
+    from src.flow import AskFlow
+
+    db_path = Path(__file__).resolve().parents[1] / "data" / "state.sqlite"
+    taxonomy_yaml = Path(__file__).resolve().parents[1] / "config" / "taxonomy.yaml"
+    cache_dir = Path(__file__).resolve().parents[1] / "data" / "cache"
+
+    if property_id == "list":
+        # List properties as a dev helper.
+        repo = Repo(db_path)
+        for p in repo.list_properties():
+            print(f"  {p.eg_property_id}  {p.city}, {p.country}  {p.star_rating or '?'}-star")
+        return
+
+    repo = Repo(db_path)
+    llm = LlmClient(cache_dir=cache_dir)
+    topics = load_taxonomy(taxonomy_yaml)
+
+    today = date.fromisoformat(today_override) if today_override else _max_review_date(repo)
+
+    flow = AskFlow(
+        repo=repo,
+        llm=llm,
+        taxonomy=topics,
+        topic_embeddings={},  # empty — redundancy penalty disabled without these
+        field_cluster=build_field_cluster_map(topics),
+    )
+
+    prop = repo.get_property(property_id)
+    if prop is None:
+        print(f"[ask] Unknown property_id {property_id}. Try `run.py ask list`.")
+        return
+
+    print(f"[ask] Property: {prop.city}, {prop.country} ({prop.star_rating or '?'}\u2605)")
+    print(f"[ask] Today (data-relative): {today}")
+    print(f"[ask] Review: {review_text!r}")
+    print()
+    print("[ask] Picking follow-up questions...")
+
+    questions = flow.submit_review(property_id, review_text, today=today)
+
+    if not questions:
+        print("  (no follow-up needed \u2014 property is fully covered)")
+        return
+
+    for i, q in enumerate(questions, start=1):
+        print()
+        print(f"  Question {i}: {q.question_text}")
+        print(f"    (why: {q.reason})")
+        print(f"    (input type: {q.input_type})")
+        try:
+            ans = input("    Your answer (Enter to skip): ").strip()
+        except EOFError:
+            ans = ""
+        ans_to_pass = ans if ans else None
+        answer = flow.submit_answer(property_id, q, ans_to_pass, today=today)
+        print(f"    \u2192 status={answer.status}, parsed_value={answer.parsed_value!r}")
+
+    # Summary
+    print()
+    print("[ask] Updated field states:")
+    for q in questions:
+        fs = repo.get_field_state(property_id, q.field_id)
+        if fs is not None:
+            print(f"  {fs.field_id}: value_known={fs.value_known}, "
+                  f"mention_count={fs.mention_count}, last_confirmed={fs.last_confirmed_date}")
+
+
+def _max_review_date(repo) -> "date":
+    """Find the newest acquisition_date across all reviews (reproducible 'today')."""
+    from datetime import date
+    all_dates = []
+    for p in repo.list_properties():
+        for r in repo.list_reviews_for(p.eg_property_id):
+            all_dates.append(r.acquisition_date)
+    return max(all_dates) if all_dates else date.today()
