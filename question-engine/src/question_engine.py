@@ -7,6 +7,7 @@ from src.db import Repo
 from src.enrich import enrich_review
 from src.ingest import load_properties, load_reviews
 from src.llm import LlmClient
+from src.signals import build_all_field_states
 from src.taxonomy import load_taxonomy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -97,3 +98,7 @@ def build(
     print(f"[build] done in {elapsed:.1f}s. ok={done} fail={failed}")
     if failed > 0:
         print(f"[build] WARNING: {failed} reviews failed enrichment. Rerun to retry (cache will skip successful ones).")
+
+    print("[build] aggregating field states...")
+    n = build_all_field_states(repo, taxonomy_yaml)
+    print(f"[build] wrote {n} field states")

@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 import sqlite3
 import numpy as np
 from src.db import Repo
@@ -115,3 +116,25 @@ def test_upsert_review_tags_and_append_only_answers(tmp_db):
         assert answer_count == 2
     finally:
         conn.close()
+
+
+def test_list_review_tags_for_all_roundtrip(tmp_path):
+    db = tmp_path / "state.sqlite"
+    repo = Repo(db)
+    repo.init_schema()
+    # Seed a property and review so the FK-less tags have a review to anchor to
+    repo.upsert_property(Property(eg_property_id="p1"))
+    repo.upsert_review(Review(review_id="p1:0", eg_property_id="p1",
+                              acquisition_date=date(2024, 1, 1),
+                              rating=RatingBreakdown()))
+    repo.upsert_review_tags("p1:0", [
+        {"field_id": "topic:wifi", "mentioned": True, "sentiment": 1, "assertion": "fast wifi"},
+        {"field_id": "topic:pool", "mentioned": False, "sentiment": None, "assertion": None},
+    ])
+    tags = repo.list_review_tags_for_all()
+    assert "p1:0" in tags
+    assert len(tags["p1:0"]) == 2
+    wifi = next(t for t in tags["p1:0"] if t["field_id"] == "topic:wifi")
+    assert wifi["mentioned"] is True
+    assert wifi["sentiment"] == 1
+    assert wifi["assertion"] == "fast wifi"

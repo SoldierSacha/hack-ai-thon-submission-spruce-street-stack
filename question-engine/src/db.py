@@ -122,6 +122,12 @@ class Repo:
         ).fetchall()
         return [Review.model_validate_json(r["raw_json"]) for r in rows]
 
+    def list_reviews(self) -> list[Review]:
+        rows = self._conn.execute(
+            "SELECT raw_json FROM reviews ORDER BY eg_property_id, acquisition_date"
+        ).fetchall()
+        return [Review.model_validate_json(r["raw_json"]) for r in rows]
+
     def load_embedding(self, review_id: str) -> np.ndarray | None:
         row = self._conn.execute(
             "SELECT embedding FROM reviews WHERE review_id = ?", (review_id,)
@@ -145,6 +151,42 @@ class Repo:
                         tag.get("assertion"),
                     ),
                 )
+
+    def list_review_tags_all(self) -> dict[str, list[dict]]:
+        """
+        Return every review tag, grouped by review_id.
+        Each tag dict: {field_id, mentioned, sentiment, assertion}.
+        """
+        rows = self._conn.execute(
+            "SELECT review_id, field_id, mentioned, sentiment, assertion FROM review_tags"
+        ).fetchall()
+        out: dict[str, list[dict]] = {}
+        for row in rows:
+            out.setdefault(row["review_id"], []).append({
+                "field_id": row["field_id"],
+                "mentioned": bool(row["mentioned"]),
+                "sentiment": row["sentiment"],
+                "assertion": row["assertion"],
+            })
+        return out
+
+    def list_review_tags_for_all(self) -> dict[str, list[dict]]:
+        """
+        Return all review_tags grouped by review_id.
+        Each list item has keys: field_id, mentioned (bool), sentiment (int|None), assertion (str|None).
+        """
+        out: dict[str, list[dict]] = {}
+        rows = self._conn.execute(
+            "SELECT review_id, field_id, mentioned, sentiment, assertion FROM review_tags"
+        ).fetchall()
+        for row in rows:
+            out.setdefault(row["review_id"], []).append({
+                "field_id": row["field_id"],
+                "mentioned": bool(row["mentioned"]),
+                "sentiment": row["sentiment"],
+                "assertion": row["assertion"],
+            })
+        return out
 
     # --- field_state ---
 

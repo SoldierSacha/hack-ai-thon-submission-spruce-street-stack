@@ -1,7 +1,9 @@
 import math
 from datetime import date
+from pathlib import Path
+from src.db import Repo
 from src.models import Property, Review, FieldState, TaxonomyTopic, SUB_RATING_KEYS
-from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS
+from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS, load_taxonomy
 
 def ema_series(values: list[float], half_life: float) -> float | None:
     if not values: return None
@@ -156,3 +158,57 @@ def build_topic_field_states(
                     mention_count=len(pairs_sorted),
                 ))
     return out
+
+
+def build_all_field_states(repo: Repo, taxonomy_yaml: str | Path) -> int:
+    """
+    Read properties, reviews, and review_tags from the repo; run the three
+    field_state builders; upsert every resulting FieldState back to the repo.
+
+    Every property in the repo receives a FieldState for every known field id
+    (rating, schema, and topic) — even properties with no reviews yet. The
+    rating and topic builders key off the review set, so we pad their output
+    with "unknown" states for properties that had no reviews.
+
+    Returns the total number of FieldStates written.
+    """
+    properties = repo.list_properties()
+    reviews = [r for p in properties for r in repo.list_reviews_for(p.eg_property_id)]
+    review_tags = repo.list_review_tags_for_all()
+    topics = load_taxonomy(taxonomy_yaml)
+
+    rating_states = build_rating_field_states(reviews)
+    schema_states = build_schema_field_states(properties, reviews=reviews)
+    topic_states = build_topic_field_states(reviews, review_tags, topics)
+
+    # Pad ratings with unknown states for properties that had no reviews.
+    rating_pids = {s.eg_property_id for s in rating_states}
+    for prop in properties:
+        if prop.eg_property_id in rating_pids:
+            continue
+        for key in SUB_RATING_KEYS:
+            rating_states.append(FieldState(
+                eg_property_id=prop.eg_property_id,
+                field_id=f"rating:{key}",
+                value_known=False,
+                mention_count=0,
+            ))
+
+    # Pad topics with unknown states for properties that had no reviews.
+    topic_pids = {s.eg_property_id for s in topic_states}
+    for prop in properties:
+        if prop.eg_property_id in topic_pids:
+            continue
+        for topic in topics:
+            topic_states.append(FieldState(
+                eg_property_id=prop.eg_property_id,
+                field_id=f"topic:{topic.topic_id}",
+                value_known=False,
+                mention_count=0,
+            ))
+
+    total = 0
+    for state in rating_states + schema_states + topic_states:
+        repo.upsert_field_state(state)
+        total += 1
+    return total

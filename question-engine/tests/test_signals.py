@@ -1,9 +1,12 @@
 from datetime import date
+from pathlib import Path
+from src.db import Repo
 from src.signals import (
     ema_series,
     build_rating_field_states,
     build_schema_field_states,
     build_topic_field_states,
+    build_all_field_states,
 )
 from src.models import Property, Review, RatingBreakdown, FieldState, SUB_RATING_KEYS, TaxonomyTopic
 from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS
@@ -214,3 +217,52 @@ def test_topic_states_ignores_non_topic_tags():
     states = build_topic_field_states(reviews, tags, _topics())
     wifi = next(s for s in states if s.field_id == "topic:wifi" and s.eg_property_id == "p1")
     assert wifi.value_known is False   # no topic:wifi tag was present
+
+
+def test_build_all_field_states_integration(tmp_path):
+    """End-to-end: seed a minimal repo, run aggregation, verify counts."""
+    db = tmp_path / "state.sqlite"
+    repo = Repo(db)
+    repo.init_schema()
+
+    # seed 2 properties
+    repo.upsert_property(Property(eg_property_id="p1", city="A", amenities={"spa": []}))
+    repo.upsert_property(Property(eg_property_id="p2", city="B", amenities={"spa": ["sauna"]}))
+
+    # seed a review on p1 with a rating and some tags
+    rev = Review(review_id="p1:0", eg_property_id="p1",
+                 acquisition_date=date(2025, 9, 1),
+                 rating=RatingBreakdown(overall=5))
+    repo.upsert_review(rev)
+    repo.upsert_review_tags("p1:0", [
+        {"field_id": "topic:wifi", "mentioned": True, "sentiment": 1, "assertion": None},
+    ])
+
+    n = build_all_field_states(repo, taxonomy_yaml="config/taxonomy.yaml")
+
+    # Expected count:
+    #   ratings: 2 properties × 15 sub-keys = 30
+    #   schema: 2 properties × 12 desc fields = 24
+    #   topics: 2 properties × 30 taxonomy topics = 60
+    # Total = 114
+    assert n == 114
+
+    # Spot-check specific state values via repo
+    p1_overall = repo.get_field_state("p1", "rating:overall")
+    assert p1_overall.value_known is True
+    assert p1_overall.mention_count == 1
+
+    p1_checkin = repo.get_field_state("p1", "rating:checkin")
+    assert p1_checkin.value_known is False
+
+    p2_spa = repo.get_field_state("p2", "schema:property_amenity_spa")
+    assert p2_spa.value_known is True
+    p1_spa = repo.get_field_state("p1", "schema:property_amenity_spa")
+    assert p1_spa.value_known is False
+
+    p1_wifi = repo.get_field_state("p1", "topic:wifi")
+    assert p1_wifi.value_known is True
+    assert p1_wifi.mention_count == 1
+
+    p2_wifi = repo.get_field_state("p2", "topic:wifi")
+    assert p2_wifi.value_known is False
