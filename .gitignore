@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Provided dataset (not ours to redistribute)
+hackathon resources/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets & build artifacts
+.env
+question-engine/.env
+question-engine/data/state.sqlite
+question-engine/data/cache/
+
+# Editors
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
