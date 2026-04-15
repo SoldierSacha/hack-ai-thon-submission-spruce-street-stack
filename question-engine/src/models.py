@@ -30,7 +30,7 @@ class RatingBreakdown(BaseModel):
     @classmethod
     def from_raw(cls, d: dict | None) -> "RatingBreakdown":
         d = d or {}
-        cleaned = {k: (v if isinstance(v, int) and v > 0 else None)
+        cleaned = {k: (int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None)
                    for k, v in d.items() if k in SUB_RATING_KEYS}
         return cls(**cleaned)
 
