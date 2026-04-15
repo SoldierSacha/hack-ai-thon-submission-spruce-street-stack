@@ -1,6 +1,11 @@
 from datetime import date
-from src.signals import ema_series, build_rating_field_states, build_schema_field_states
-from src.models import Property, Review, RatingBreakdown, FieldState, SUB_RATING_KEYS
+from src.signals import (
+    ema_series,
+    build_rating_field_states,
+    build_schema_field_states,
+    build_topic_field_states,
+)
+from src.models import Property, Review, RatingBreakdown, FieldState, SUB_RATING_KEYS, TaxonomyTopic
 from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS
 
 def test_ema_empty():
@@ -127,3 +132,85 @@ def test_schema_count_equals_properties_times_schema_fields():
     p2 = Property(eg_property_id="p2")
     states = build_schema_field_states([p1, p2])
     assert len(states) == 2 * len(SCHEMA_DESCRIPTION_FIELDS)
+
+
+def _review(pid, idx, when):
+    return Review(
+        review_id=f"{pid}:{idx}",
+        eg_property_id=pid,
+        acquisition_date=when,
+        rating=RatingBreakdown(),
+    )
+
+def _topics():
+    return [
+        TaxonomyTopic(topic_id="wifi", label="WiFi", cluster_id="connectivity", question_hint="wifi"),
+        TaxonomyTopic(topic_id="pool", label="Pool", cluster_id="amenities", question_hint="pool"),
+    ]
+
+def test_topic_states_empty_reviews_empty_tags():
+    states = build_topic_field_states([], {}, _topics())
+    assert states == []
+
+def test_topic_states_no_tags_emits_unknown_for_every_pair():
+    reviews = [_review("p1", 0, date(2024, 1, 1))]
+    states = build_topic_field_states(reviews, {}, _topics())
+    # 1 property × 2 topics = 2 states
+    assert len(states) == 2
+    for s in states:
+        assert s.value_known is False
+        assert s.mention_count == 0
+
+def test_topic_states_mentioned_positive_updates_ema():
+    reviews = [
+        _review("p1", 0, date(2024, 1, 1)),
+        _review("p1", 1, date(2024, 6, 1)),
+    ]
+    tags = {
+        "p1:0": [{"field_id": "topic:wifi", "mentioned": True, "sentiment": 1, "assertion": None}],
+        "p1:1": [{"field_id": "topic:wifi", "mentioned": True, "sentiment": -1, "assertion": None}],
+    }
+    states = build_topic_field_states(reviews, tags, _topics())
+    wifi = next(s for s in states if s.field_id == "topic:wifi" and s.eg_property_id == "p1")
+    pool = next(s for s in states if s.field_id == "topic:pool" and s.eg_property_id == "p1")
+    assert wifi.value_known is True
+    assert wifi.mention_count == 2
+    assert wifi.short_ema is not None
+    assert wifi.last_confirmed_date == date(2024, 6, 1)
+    assert pool.value_known is False  # no pool mentions
+
+def test_topic_states_unmentioned_is_skipped():
+    reviews = [_review("p1", 0, date(2024, 1, 1))]
+    tags = {
+        "p1:0": [
+            {"field_id": "topic:wifi", "mentioned": False, "sentiment": None, "assertion": None},
+        ],
+    }
+    states = build_topic_field_states(reviews, tags, _topics())
+    wifi = next(s for s in states if s.field_id == "topic:wifi" and s.eg_property_id == "p1")
+    assert wifi.value_known is False
+    assert wifi.mention_count == 0
+
+def test_topic_states_mentioned_but_no_sentiment_is_skipped():
+    """A tag with mentioned=True but sentiment=None contributes no EMA signal."""
+    reviews = [_review("p1", 0, date(2024, 1, 1))]
+    tags = {
+        "p1:0": [{"field_id": "topic:wifi", "mentioned": True, "sentiment": None, "assertion": "mentioned"}],
+    }
+    states = build_topic_field_states(reviews, tags, _topics())
+    wifi = next(s for s in states if s.field_id == "topic:wifi" and s.eg_property_id == "p1")
+    assert wifi.value_known is False
+    assert wifi.mention_count == 0
+
+def test_topic_states_ignores_non_topic_tags():
+    """Tags like field_id='rating:checkin' should be ignored by this function."""
+    reviews = [_review("p1", 0, date(2024, 1, 1))]
+    tags = {
+        "p1:0": [
+            {"field_id": "rating:checkin", "mentioned": True, "sentiment": 1, "assertion": None},
+            {"field_id": "schema:pet_policy", "mentioned": True, "sentiment": None, "assertion": None},
+        ],
+    }
+    states = build_topic_field_states(reviews, tags, _topics())
+    wifi = next(s for s in states if s.field_id == "topic:wifi" and s.eg_property_id == "p1")
+    assert wifi.value_known is False   # no topic:wifi tag was present

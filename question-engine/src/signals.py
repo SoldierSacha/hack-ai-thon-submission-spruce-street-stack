@@ -1,6 +1,6 @@
 import math
 from datetime import date
-from src.models import Property, Review, FieldState, SUB_RATING_KEYS
+from src.models import Property, Review, FieldState, TaxonomyTopic, SUB_RATING_KEYS
 from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS
 
 def ema_series(values: list[float], half_life: float) -> float | None:
@@ -90,4 +90,69 @@ def build_schema_field_states(
                 mention_count=1 if value_known else 0,
                 last_asked_date=None,
             ))
+    return out
+
+
+def build_topic_field_states(
+    reviews: list[Review],
+    review_tags: dict[str, list[dict]],
+    topics: list[TaxonomyTopic],
+) -> list[FieldState]:
+    """For every (property_id, topic_id) pair, produce a FieldState from review tags."""
+    if not reviews:
+        return []
+
+    review_by_id = {r.review_id: r for r in reviews}
+
+    # (pid, topic_id) -> list of (acquisition_date, sentiment_float)
+    groups: dict[tuple[str, str], list[tuple[date, float]]] = {}
+
+    for review_id, tags in review_tags.items():
+        review = review_by_id.get(review_id)
+        if review is None:
+            continue
+        for tag in tags:
+            field_id = tag.get("field_id", "")
+            if not field_id.startswith("topic:"):
+                continue
+            if not tag.get("mentioned"):
+                continue
+            sentiment = tag.get("sentiment")
+            if sentiment is None:
+                continue
+            topic_id = field_id[len("topic:"):]
+            key = (review.eg_property_id, topic_id)
+            groups.setdefault(key, []).append((review.acquisition_date, float(sentiment)))
+
+    property_ids = sorted({r.eg_property_id for r in reviews})
+
+    out: list[FieldState] = []
+    for pid in property_ids:
+        for topic in topics:
+            key = (pid, topic.topic_id)
+            pairs = groups.get(key)
+            field_id = f"topic:{topic.topic_id}"
+            if not pairs:
+                out.append(FieldState(
+                    eg_property_id=pid,
+                    field_id=field_id,
+                    value_known=False,
+                    mention_count=0,
+                    short_ema=None,
+                    long_ema=None,
+                    last_confirmed_date=None,
+                ))
+            else:
+                pairs_sorted = sorted(pairs, key=lambda p: p[0])
+                values = [v for _, v in pairs_sorted]
+                last_confirmed = max(d for d, _ in pairs_sorted)
+                out.append(FieldState(
+                    eg_property_id=pid,
+                    field_id=field_id,
+                    value_known=True,
+                    last_confirmed_date=last_confirmed,
+                    short_ema=ema_series(values, half_life=5),
+                    long_ema=ema_series(values, half_life=30),
+                    mention_count=len(pairs_sorted),
+                ))
     return out
