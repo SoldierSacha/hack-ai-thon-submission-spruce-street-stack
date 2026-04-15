@@ -1,7 +1,10 @@
+from datetime import date
 from unittest.mock import MagicMock
 
-from src.enrich import detect_language, tag_review, translate_to_english
-from src.models import TaxonomyTopic
+import numpy as np
+
+from src.enrich import detect_language, enrich_review, tag_review, translate_to_english
+from src.models import RatingBreakdown, Review, TaxonomyTopic
 
 
 def test_detect_language_basic():
@@ -114,3 +117,45 @@ def test_tag_review_prompt_contains_all_topic_ids_and_hints():
     assert call_kwargs["user"] == "x"
     assert call_kwargs["temperature"] == 0.0
     assert call_kwargs["model"] == "gpt-4.1-mini"
+
+
+def test_enrich_review_happy_path():
+    topics = [
+        TaxonomyTopic(topic_id="wifi", label="WiFi", cluster_id="connectivity", question_hint="wifi"),
+    ]
+    llm = MagicMock()
+    llm.chat_text.return_value = "The room was clean"   # translation
+    llm.embed.return_value = [0.1, 0.2, 0.3]
+    llm.chat_json.return_value = {"wifi": {"mentioned": False, "sentiment": None, "assertion": None}}
+
+    review = Review(
+        review_id="p1:0", eg_property_id="p1",
+        acquisition_date=date(2025, 9, 1),
+        rating=RatingBreakdown(),
+        review_text_orig="Das Zimmer war sauber",  # German, will trigger translation
+    )
+    text_en, lang, emb, tags = enrich_review(review, topics, llm)
+    assert text_en == "The room was clean"
+    assert lang == "de"
+    assert emb is not None and emb.dtype == np.float32
+    assert "wifi" in tags
+
+
+def test_enrich_review_empty_text_skips_llm():
+    topics = [TaxonomyTopic(topic_id="wifi", label="WiFi", cluster_id="connectivity", question_hint="wifi")]
+    llm = MagicMock()
+    review = Review(
+        review_id="p1:1", eg_property_id="p1",
+        acquisition_date=date(2025, 9, 1),
+        rating=RatingBreakdown(),
+        review_text_orig=None,
+    )
+    text_en, lang, emb, tags = enrich_review(review, topics, llm)
+    assert text_en is None
+    assert lang == "unknown"
+    assert emb is None
+    assert tags["wifi"] == {"mentioned": False, "sentiment": None, "assertion": None}
+    llm.chat_text.assert_not_called()
+    llm.embed.assert_not_called()
+    # tag_review IS called with None, which internally short-circuits (no LLM call).
+    llm.chat_json.assert_not_called()

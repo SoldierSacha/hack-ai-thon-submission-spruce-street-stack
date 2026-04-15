@@ -1,7 +1,8 @@
+import numpy as np
 from langdetect import detect, DetectorFactory, LangDetectException
 
 from src.llm import LlmClient
-from src.models import TaxonomyTopic
+from src.models import Review, TaxonomyTopic
 
 DetectorFactory.seed = 0  # deterministic
 
@@ -88,3 +89,25 @@ def tag_review(
             "assertion": assertion,
         }
     return out
+
+
+def enrich_review(
+    review: Review,
+    topics: list[TaxonomyTopic],
+    llm: LlmClient,
+    chat_model: str = "gpt-4.1-mini",
+    embed_model: str = "text-embedding-3-small",
+) -> tuple[str | None, str, np.ndarray | None, dict]:
+    """
+    Run translate -> embed -> tag for one review.
+    Returns (review_en, lang, embedding, tags).
+    If the review text is None/empty, returns (None, "unknown", None, default_tags).
+    """
+    text = review.review_text_orig
+    if not text or not text.strip():
+        return None, "unknown", None, tag_review(None, topics, llm, model=chat_model)
+    lang = detect_language(text)
+    text_en = translate_to_english(text, lang, llm, model=chat_model)
+    emb = np.array(llm.embed(text_en, model=embed_model), dtype=np.float32)
+    tags = tag_review(text_en, topics, llm, model=chat_model)
+    return text_en, lang, emb, tags
