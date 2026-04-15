@@ -1,0 +1,41 @@
+topics:
+  # connectivity
+  - { id: wifi,                 label: "WiFi",                    cluster: connectivity, question_hint: "speed and coverage of WiFi" }
+  - { id: cell_reception,       label: "Cell reception",          cluster: connectivity, question_hint: "mobile phone reception on-site" }
+  # room
+  - { id: room_cleanliness,     label: "Room cleanliness",        cluster: room,         question_hint: "how clean the room was" }
+  - { id: bed_comfort,          label: "Bed comfort",             cluster: room,         question_hint: "mattress and bedding comfort" }
+  - { id: shower_pressure,      label: "Shower / water pressure", cluster: room,         question_hint: "water pressure and temperature" }
+  - { id: ac_heating,           label: "AC & heating",            cluster: room,         question_hint: "room temperature control" }
+  - { id: noise,                label: "Noise level",             cluster: room,         question_hint: "sound from street/hallway" }
+  # building
+  - { id: elevator,             label: "Elevator",                cluster: building,     question_hint: "elevator availability and condition" }
+  - { id: accessibility,        label: "Accessibility",           cluster: building,     question_hint: "step-free access, grab bars, ramps" }
+  - { id: recent_renovation,    label: "Recent renovation",       cluster: building,     question_hint: "whether property looks recently updated" }
+  # food
+  - { id: breakfast,            label: "Breakfast",               cluster: food,         question_hint: "breakfast availability and quality" }
+  - { id: onsite_dining,        label: "On-site dining",          cluster: food,         question_hint: "hotel restaurant / bar" }
+  # amenities
+  - { id: pool,                 label: "Pool",                    cluster: amenities,    question_hint: "pool availability and condition" }
+  - { id: gym,                  label: "Gym",                     cluster: amenities,    question_hint: "fitness center" }
+  - { id: spa,                  label: "Spa",                     cluster: amenities,    question_hint: "spa services" }
+  - { id: business_center,      label: "Business center",         cluster: amenities,    question_hint: "workspace / printing / meeting rooms" }
+  # service
+  - { id: staff_helpfulness,    label: "Staff helpfulness",       cluster: service,      question_hint: "how responsive and friendly staff were" }
+  - { id: checkin_ease,         label: "Check-in ease",           cluster: service,      question_hint: "speed and smoothness of check-in" }
+  - { id: language_barriers,    label: "Language barriers",       cluster: service,      question_hint: "staff English / local language" }
+  # location
+  - { id: walkability,          label: "Walkability",             cluster: location,     question_hint: "walking access to attractions / transit" }
+  - { id: neighborhood_safety,  label: "Neighborhood safety",     cluster: location,     question_hint: "feeling safe walking around area" }
+  - { id: transit_access,       label: "Transit access",          cluster: location,     question_hint: "proximity to public transit / airport shuttle" }
+  # parking / access
+  - { id: parking_availability, label: "Parking availability",    cluster: parking,      question_hint: "parking presence, cost, and ease" }
+  - { id: ev_charging,          label: "EV charging",             cluster: parking,      question_hint: "electric vehicle charging on-site" }
+  # policies / stay
+  - { id: pet_friendly,         label: "Pet policy in practice",  cluster: policies,     question_hint: "what it was actually like traveling with a pet" }
+  - { id: family_friendly,      label: "Family friendliness",     cluster: policies,     question_hint: "amenities/services for children" }
+  - { id: value_for_money,      label: "Value for money",         cluster: value,        question_hint: "felt price-to-quality ratio" }
+  - { id: hidden_fees,          label: "Hidden fees",             cluster: value,        question_hint: "resort/destination/parking fees not listed" }
+  # misc
+  - { id: listing_accuracy,     label: "Listing accuracy",        cluster: meta,         question_hint: "whether photos/description matched reality" }
+  - { id: safety_security,      label: "In-room security",        cluster: meta,         question_hint: "safe, door locks, in-room security" }
