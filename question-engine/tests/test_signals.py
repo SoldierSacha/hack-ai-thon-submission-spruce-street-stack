@@ -1,6 +1,7 @@
 from datetime import date
-from src.signals import ema_series, build_rating_field_states
-from src.models import Review, RatingBreakdown, FieldState, SUB_RATING_KEYS
+from src.signals import ema_series, build_rating_field_states, build_schema_field_states
+from src.models import Property, Review, RatingBreakdown, FieldState, SUB_RATING_KEYS
+from src.taxonomy import SCHEMA_DESCRIPTION_FIELDS
 
 def test_ema_empty():
     assert ema_series([], half_life=5) is None
@@ -79,3 +80,50 @@ def test_rating_states_last_confirmed_is_most_recent_nonnull_for_that_key():
     assert overall.last_confirmed_date == date(2024, 12, 1)
     assert service.last_confirmed_date == date(2024, 1, 1)  # last time it was non-None
     assert service.mention_count == 1
+
+
+def test_schema_empty_amenity_is_unknown():
+    p = Property(eg_property_id="p1", amenities={"spa": [], "internet": ["free wifi"]})
+    states = build_schema_field_states([p])
+    spa = next(s for s in states if s.field_id == "schema:property_amenity_spa")
+    assert spa.value_known is False
+    assert spa.mention_count == 0
+
+def test_schema_populated_amenity_is_known():
+    p = Property(eg_property_id="p1", amenities={"spa": ["massage", "sauna"]})
+    states = build_schema_field_states([p])
+    spa = next(s for s in states if s.field_id == "schema:property_amenity_spa")
+    assert spa.value_known is True
+    assert spa.mention_count == 1
+
+def test_schema_policy_string_field():
+    p1 = Property(eg_property_id="p1", pet_policy="No pets allowed.")
+    p2 = Property(eg_property_id="p2", pet_policy=None)
+    p3 = Property(eg_property_id="p3", pet_policy="   ")  # whitespace-only
+    states = build_schema_field_states([p1, p2, p3])
+    pp1 = next(s for s in states if s.field_id == "schema:pet_policy" and s.eg_property_id == "p1")
+    pp2 = next(s for s in states if s.field_id == "schema:pet_policy" and s.eg_property_id == "p2")
+    pp3 = next(s for s in states if s.field_id == "schema:pet_policy" and s.eg_property_id == "p3")
+    assert pp1.value_known is True
+    assert pp2.value_known is False
+    assert pp3.value_known is False   # whitespace-only is unknown
+
+def test_schema_last_confirmed_uses_max_review_date():
+    p = Property(eg_property_id="p1", pet_policy="Yes pets")
+    reviews = [
+        Review(review_id="p1:0", eg_property_id="p1",
+               acquisition_date=date(2024, 1, 1), rating=RatingBreakdown()),
+        Review(review_id="p1:1", eg_property_id="p1",
+               acquisition_date=date(2025, 6, 1), rating=RatingBreakdown()),
+        Review(review_id="p2:0", eg_property_id="p2",          # different property
+               acquisition_date=date(2026, 1, 1), rating=RatingBreakdown()),
+    ]
+    states = build_schema_field_states([p], reviews=reviews)
+    pp = next(s for s in states if s.field_id == "schema:pet_policy" and s.eg_property_id == "p1")
+    assert pp.last_confirmed_date == date(2025, 6, 1)  # from p1 reviews only
+
+def test_schema_count_equals_properties_times_schema_fields():
+    p1 = Property(eg_property_id="p1")
+    p2 = Property(eg_property_id="p2")
+    states = build_schema_field_states([p1, p2])
+    assert len(states) == 2 * len(SCHEMA_DESCRIPTION_FIELDS)
