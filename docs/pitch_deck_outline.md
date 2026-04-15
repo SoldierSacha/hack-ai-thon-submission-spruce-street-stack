@@ -113,14 +113,14 @@ Every slide below specifies:
 ## Slide 7 — Demo A: data-rich property
 
 - **Title:** Bell Gardens, United States — 2.0★, 1,094 reviews
-- **Subtitle:** A thousand reviews, and 29 fields still missing.
+- **Subtitle:** A thousand reviews, and 13 fields still missing.
 - **Key content (screenshot):**
-  - Streamlit screen with info card on the left (28 / 57 fields known), coverage meter top-right
+  - Streamlit screen with info card on the left (44 / 57 fields known), coverage meter top-right
   - Review box with typed text: *"Loved the pool, kids had a blast. Room was a bit noisy from the parking lot though."*
   - Follow-up card:
     - **Question:** *"How smooth was your check-in at the hotel?"* (1–5 stars)
     - **Why we asked:** *"Check-in has never been rated across 1,094 reviews for this property."*
-  - Info card after the answer: `Check-in: 4 / 5` highlighted, coverage ticks **28 → 29**
+  - Info card after the answer: `Check-in: 4 / 5` highlighted, coverage ticks **44 → 45**
 - **Speaker notes:** *"Pool and noise are already covered by the review — the ranker ignores them. It picks check-in because it's never been answered for this property. One question, one structural gap closed."*
 
 ---
@@ -130,27 +130,32 @@ Every slide below specifies:
 - **Title:** Freudenstadt, Germany — 8 reviews, voice input
 - **Subtitle:** Empty review box. Structural schema gap. Voice answer.
 - **Key content (screenshot):**
-  - Streamlit screen, Freudenstadt selected, info card 19 / 57, mostly grey
+  - Streamlit screen, Freudenstadt selected, info card 26 / 57, mostly grey
   - Empty review text box
   - Follow-up card:
     - **Question:** *"Does the property have a working spa or wellness area?"* (Yes / No)
     - **Why we asked:** *"We have no information about spa amenities for this property."*
   - Mic icon highlighted, transcription overlay: *"Yes, there's a small spa with a sauna."*
-  - After answer: info card shows `Spa: yes — sauna`, coverage **19 → 20**
+  - After answer: info card shows `Spa: yes — sauna`, coverage **26 → 27**
 - **Speaker notes:** *"Cold-start property. No review text to mine. The ranker falls back to structural schema gaps — this property's description never said whether a spa exists. Yes-or-no fills it. We accept the answer by voice because the workbook asks for it and `streamlit-mic-recorder` is three minutes of code."*
 
 ---
 
 ## Slide 9 — Impact
 
-- **Title:** +14 fields filled across 2 properties in under 2 minutes
-- **Subtitle:** Half of those gains are in categories Expedia has never successfully collected.
+- **Title:** Every follow-up chips at gaps the current form silently misses
+- **Subtitle:** Five sub-ratings have zero data across 5,999 reviews. Our system asks about exactly those first.
 - **Key content:**
-  - Big-number center: **+14 fields in <2 min of reviewer effort.**
-  - Bar chart: per-property coverage before vs after across 10 simulated sessions — all 13 properties, green bars for gains.
-  - Callout: *"Average coverage went from 28 → 42 fields known per property. Roughly half the gains are in the five 100%-null sub-ratings."*
-  - Supporting number: *"If Expedia collected one marginal field per review at their current review volume, that's millions of facts per week without any new UI surface."*
-- **Speaker notes:** *"These are demo numbers, not A/B-tested production numbers — we're honest about that. But the structural mechanics are right: every answered follow-up closes a gap that the current form has been silently failing to collect."*
+  - Header stat: **195 rating cells total across 13 properties × 15 sub-categories. 102 are completely empty (52%).**
+  - Per-property coverage table (real numbers from the enriched DB):
+    - Broomfield (1006 reviews): 48/57
+    - Ocala (765): 45/57
+    - Bell Gardens (1094): 44/57
+    - Rome (772), Monterey (728), Frisco (1065): 43–44/57
+    - Freudenstadt (8), Mbombela (10): 26/57 — *cold-start*
+  - Callout: *"The ratio of reviews-to-coverage is flat. A thousand reviews only gets you ~14 more fields than ten reviews. The missing ones are structurally impossible to collect with today's form."*
+  - Supporting number: *"Expedia processes millions of reviews per week. A 2-4 percentage-point improvement in per-review field yield compounds into millions of newly-known facts."*
+- **Speaker notes:** *"Our core claim isn't 'we fill 14 fields.' It's 'we fill the specific fields the current form can't.' That's the structural fix. The demo shows it on two properties; the mechanism works on every one."*
 
 ---
 

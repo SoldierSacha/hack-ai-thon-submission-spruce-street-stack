@@ -45,10 +45,10 @@
 **ENGINEER** *(as the property card loads):*
 > "This property has over a thousand reviews. You'd think nothing is missing. Look at the info card."
 
-**SCREEN:** Info card on the left. Most amenity rows are populated. Most sub-rating rows show `—`. Coverage meter top-right reads **28 / 57**.
+**SCREEN:** Info card on the left. Most amenity rows are populated. Most sub-rating rows show `—`. Coverage meter top-right reads **44 / 57**.
 
 **ENGINEER:**
-> "Twenty-eight fields known out of fifty-seven. Over half this property's profile is blank — despite a thousand reviews."
+> "Forty-four fields known out of fifty-seven. Thirteen fields still blank — despite over a thousand reviews. Every one of those thirteen is something the system is going to ask about first."
 
 **ENGINEER** *(types in the review box, real-time):*
 > "I'll leave a typical review."
@@ -69,7 +69,7 @@
 **ENGINEER** *(clicks 4 stars, hits Submit-answer):*
 > "Four stars."
 
-**SCREEN:** Info card on the left flashes yellow. `Check-in: —` becomes `Check-in: 4 / 5`. Coverage meter ticks **28 → 29 / 57**.
+**SCREEN:** Info card on the left flashes yellow. `Check-in: —` becomes `Check-in: 4 / 5`. Coverage meter ticks **44 → 45 / 57**.
 
 **ENGINEER:**
 > "One question, one missing field, now known."
@@ -80,7 +80,7 @@
 
 **ENGINEER** *(switches property dropdown):* **Freudenstadt, Germany — 8 reviews**.
 
-**SCREEN:** Info card is mostly grey. Coverage meter reads **19 / 57**.
+**SCREEN:** Info card is mostly grey. Coverage meter reads **26 / 57**.
 
 **ENGINEER:**
 > "Now a property with only eight reviews. Totally different story — here, even structural fields like the spa amenity are empty."
@@ -102,7 +102,7 @@
 **ENGINEER** *(clicks the mic icon, speaks clearly):*
 > "Yes, there's a small spa with a sauna."
 
-**SCREEN:** Transcribed text appears in the input field. **ENGINEER** clicks Submit-answer. Info card flashes — `Spa amenities: —` becomes `Spa: yes — sauna`. Coverage ticks **19 → 20 / 57**.
+**SCREEN:** Transcribed text appears in the input field. **ENGINEER** clicks Submit-answer. Info card flashes — `Spa amenities: —` becomes `Spa: yes — sauna`. Coverage ticks **26 → 27 / 57**.
 
 **ENGINEER:**
 > "Voice in, structured fact out. Next traveler sees that without anyone having written a word."
@@ -111,10 +111,10 @@
 
 ## Impact snapshot (2:45–3:15)
 
-**SCREEN:** Split view. Left: the two info cards from before. Right: same cards after. A big number in the middle: **"+14 fields filled across 2 properties in under 2 minutes of reviewer effort."**
+**SCREEN:** Split view. Left: the two info cards from before. Right: same cards after. A big number in the middle: **"+2 fields filled in 90 seconds of reviewer effort — on topics Expedia has *never* successfully collected before."**
 
 **LEAD:**
-> "We ran ten simulated sessions across our thirteen properties. Coverage went from an average of twenty-eight fields filled to forty-two. Half of those gains were on the five sub-categories Expedia has literally never successfully collected."
+> "Right now, across all thirteen properties and six thousand reviews, the average property is missing thirteen to thirty-one fields out of fifty-seven. Five of the fifteen rating sub-categories have zero data — not sparse, *zero* — across the entire corpus. Every question our system asks chips at that directly."
 
 **SCREEN:** A small chart shows per-property coverage improvement — bars colored green for gains.
 
