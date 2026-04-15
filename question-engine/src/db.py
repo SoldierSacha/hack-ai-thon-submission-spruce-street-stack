@@ -86,21 +86,34 @@ class Repo:
 
     # --- reviews ---
 
-    def upsert_review(self, r: Review, embedding: np.ndarray | None = None) -> None:
-        emb_blob = (
-            embedding.astype(np.float32).tobytes() if embedding is not None else None
-        )
+    def upsert_review(self, r: Review) -> None:
         with self._conn:
             self._conn.execute(
-                "INSERT OR REPLACE INTO reviews(review_id, eg_property_id, acquisition_date, raw_json, embedding) VALUES (?, ?, ?, ?, ?)",
+                """INSERT INTO reviews(review_id, eg_property_id, acquisition_date, raw_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(review_id) DO UPDATE SET
+                    eg_property_id = excluded.eg_property_id,
+                    acquisition_date = excluded.acquisition_date,
+                    raw_json = excluded.raw_json""",
                 (
                     r.review_id,
                     r.eg_property_id,
                     r.acquisition_date.isoformat(),
                     r.model_dump_json(),
-                    emb_blob,
                 ),
             )
+
+    def set_embedding(self, review_id: str, embedding: np.ndarray) -> None:
+        if embedding.ndim != 1:
+            raise ValueError(f"embedding must be 1-D, got shape {embedding.shape}")
+        blob = embedding.astype(np.float32, copy=False).tobytes()
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE reviews SET embedding = ? WHERE review_id = ?",
+                (blob, review_id),
+            )
+            if cur.rowcount == 0:
+                raise KeyError(review_id)
 
     def list_reviews_for(self, pid: str) -> list[Review]:
         rows = self._conn.execute(
