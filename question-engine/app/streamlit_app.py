@@ -93,8 +93,9 @@ st.markdown("""
     padding: 20px;
     margin-bottom: 16px;
 }
-.prop-card h3 { margin: 0 0 8px 0; font-size: 18px; color: #1e293b; }
-.prop-meta { color: #64748b; font-size: 13px; margin-top: 4px; }
+.prop-card h3 { margin: 0 0 8px 0; font-size: 18px; color: #1e293b !important; }
+.prop-card, .prop-card * { color: #1e293b; }
+.prop-meta { color: #64748b !important; font-size: 13px; margin-top: 4px; }
 
 /* Star pill */
 .star-pill {
@@ -164,8 +165,9 @@ st.markdown("""
     margin: 14px 0 10px 0;
     background: #fafaff;
 }
-.q-card .q-text { font-size: 17px; font-weight: 600; color: #1e293b; margin-bottom: 6px; }
-.q-card .q-reason { color: #6b7280; font-size: 13px; font-style: italic; }
+.q-card, .q-card * { color: #1e293b; }
+.q-card .q-text { font-size: 17px; font-weight: 600; color: #1e293b !important; margin-bottom: 6px; }
+.q-card .q-reason { color: #6b7280 !important; font-size: 13px; font-style: italic; }
 
 /* Score detail */
 .score-detail {
@@ -501,7 +503,7 @@ left, right = st.columns([2, 3], gap="large")
 # ========================
 with left:
     # Property card
-    star_html = f"<span class='star-pill'>{prop.star_rating or '?'}\u2605</span>" if prop else ""
+    star_html = f"<span class='star-pill'>{prop.star_rating}\u2605</span>" if prop.star_rating else ""
     avg_html = f"{prop.guestrating_avg_expedia:.1f} avg" if prop and prop.guestrating_avg_expedia else ""
     checkin_html = ""
     if prop and prop.check_in_start_time:
