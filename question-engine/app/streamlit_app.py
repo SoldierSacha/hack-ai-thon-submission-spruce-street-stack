@@ -79,7 +79,6 @@ st.markdown("""
 # ---------- state init ----------
 def _init_state():
     ss = st.session_state
-    ss.setdefault("property_id", None)
     ss.setdefault("review_text", "")
     ss.setdefault("pending_questions", [])
     ss.setdefault("answered_fields", set())  # for the flash animation
@@ -93,19 +92,29 @@ flow = get_flow()
 topics = get_taxonomy()
 
 properties = repo.list_properties()
-property_options = {
-    f"{p.city or '?'}, {p.country or '?'} "
-    f"({p.star_rating or '?'}★, {len(repo.list_reviews_for(p.eg_property_id))} reviews)": p.eg_property_id
-    for p in properties
-}
+_property_id_list = [p.eg_property_id for p in properties]
+_property_label_cache: dict[str, str] = {}
+
+def _format_property(pid: str) -> str:
+    if pid not in _property_label_cache:
+        p = repo.get_property(pid)
+        n = len(repo.list_reviews_for(pid))
+        _property_label_cache[pid] = (
+            f"{p.city or '?'}, {p.country or '?'} "
+            f"({p.star_rating or '?'}★, {n} reviews)"
+        )
+    return _property_label_cache[pid]
 
 header_cols = st.columns([4, 1, 1])
 with header_cols[0]:
     st.title("Ask What Matters")
     st.caption("Adaptive follow-up questions that fill missing property information.")
 with header_cols[1]:
-    picked = st.selectbox("Property", list(property_options.keys()), key="property_picker")
-    st.session_state.property_id = property_options[picked]
+    property_id = st.selectbox(
+        "Property", _property_id_list,
+        format_func=_format_property,
+        key="property_picker",
+    )
 with header_cols[2]:
     if st.button("🔄 Reset", help="Clear this session's answers (DB untouched)"):
         for k in ["pending_questions", "answered_fields", "last_flashed_field", "review_text"]:
@@ -113,7 +122,7 @@ with header_cols[2]:
         _init_state()
         st.rerun()
 
-property_id = st.session_state.property_id
+# property_id already set by the selectbox above (stored as the raw ID, not the label)
 prop = repo.get_property(property_id)
 
 # ---------- info card (left) + review area (right) ----------
