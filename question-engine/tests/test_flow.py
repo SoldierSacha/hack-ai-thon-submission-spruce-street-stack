@@ -80,15 +80,15 @@ def test_flow_submit_answer_scored_updates_field_state(tmp_path):
     assert fs.last_confirmed_date == date(2025, 9, 1)
 
 
-def test_flow_submit_answer_without_prior_review_raises(tmp_path):
+def test_flow_submit_answer_without_prior_review_uses_fallback(tmp_path):
+    """submit_answer without a prior submit_review should not crash — it uses a fallback review_id."""
     flow, repo, llm = _setup_flow(tmp_path)
     q = Question(field_id="rating:checkin", question_text="How was check-in?",
                  input_type="rating_1_5", reason="none")
-    try:
-        flow.submit_answer("p1", q, "4", date(2025, 9, 1))
-        raise AssertionError("should have raised")
-    except RuntimeError as e:
-        assert "No pending review" in str(e)
+    # Should NOT raise — falls back to a synthetic review_id
+    answer = flow.submit_answer("p1", q, "4 out of 5", date(2025, 9, 1))
+    assert answer.status == "scored"
+    assert answer.parsed_value == 4
 
 
 def test_flow_submit_answer_skipped_does_not_update_state(tmp_path):

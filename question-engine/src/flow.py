@@ -135,10 +135,13 @@ class AskFlow:
     ) -> Answer:
         review_id = self._pending_review_id.get(property_id)
         if review_id is None:
-            raise RuntimeError(
-                f"No pending review for property {property_id}. "
-                f"Call submit_review first."
-            )
+            # Fallback: cache was evicted between submit_review and submit_answer
+            # (common in Streamlit when the file watcher or memory pressure clears
+            # @st.cache_resource). Use the most recent live review for this property,
+            # or synthesize a review_id if none exists.
+            reviews = self.repo.list_reviews_for(property_id)
+            live = [r for r in reviews if r.source == "live"]
+            review_id = live[-1].review_id if live else f"{property_id}:live:{int(time.time() * 1000)}"
 
         # Parse the answer
         answer = parse_answer(question, answer_text, self.llm)

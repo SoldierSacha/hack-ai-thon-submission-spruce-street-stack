@@ -211,6 +211,8 @@ with right:
             questions = flow.submit_review(property_id, review_text, today=today)
         st.session_state.pending_questions = [(q, False) for q in questions]
         st.session_state.review_text = review_text
+        # Persist pending review_id in session_state (survives cache eviction)
+        st.session_state.pending_review_id = flow._pending_review_id.get(property_id)
         st.rerun()
 
     # Follow-up questions
@@ -255,6 +257,11 @@ with right:
                 bcol1, bcol2, _ = st.columns([1, 1, 3])
                 with bcol1:
                     if st.button("Submit answer", key=f"submit_{idx}"):
+                        # Restore pending review_id from session_state if cache was evicted
+                        if property_id not in flow._pending_review_id:
+                            saved_id = st.session_state.get("pending_review_id")
+                            if saved_id:
+                                flow._pending_review_id[property_id] = saved_id
                         today = _max_review_date(repo)
                         with st.spinner("Updating property info..."):
                             answer = flow.submit_answer(property_id, q, submit_text, today=today)
