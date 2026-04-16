@@ -17,7 +17,6 @@ htmlcov/
 # Secrets & build artifacts
 .env
 question-engine/.env
-question-engine/data/state.sqlite
 question-engine/data/cache/
 question-engine/data/question_engine.db
 
