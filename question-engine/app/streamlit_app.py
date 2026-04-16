@@ -462,6 +462,11 @@ def _cluster_stats(cluster: str, sf_lookup: dict[str, ScoredField], field_cluste
     return known, total
 
 
+def _field_label(fid: str) -> str:
+    """Human-readable label for a field_id."""
+    return fid.split(":", 1)[1].replace("_", " ") if ":" in fid else fid
+
+
 def _rich_why(
     sf: ScoredField,
     display_slot: int,
@@ -474,8 +479,7 @@ def _rich_why(
     cluster_label = CLUSTER_LABELS.get(cluster, cluster.replace("_", " ").title())
     known, total = _cluster_stats(cluster, sf_lookup, field_cluster)
     unknown = total - known
-    fid = sf.field_state.field_id
-    key = fid.split(":", 1)[1].replace("_", " ") if ":" in fid else fid
+    key = _field_label(sf.field_state.field_id)
 
     parts = []
 
@@ -514,6 +518,92 @@ def _rich_why(
         parts.append("Your review already touched on related topics, so this was slightly de-prioritized.")
 
     return " ".join(parts)
+
+
+def _component_bars_html(sf: ScoredField) -> str:
+    """Render horizontal bars for each score component."""
+    components = [
+        ("No data yet", sf.missing, "#ef4444"),
+        ("Outdated info", sf.stale, "#d97706"),
+        ("Rarely discussed", sf.coverage, "#6366f1"),
+        ("Redundancy penalty", sf.redundancy, "#94a3b8"),
+    ]
+    rows = []
+    for label, val, color in components:
+        pct = min(val * 100, 100)
+        rows.append(
+            f"<div style='display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px;'>"
+            f"<span style='width:120px;color:#64748b;'>{label}</span>"
+            f"<span style='flex:1;background:#f1f5f9;border-radius:3px;height:8px;overflow:hidden;'>"
+            f"<span style='display:block;width:{pct:.0f}%;height:100%;background:{color};border-radius:3px;'></span>"
+            f"</span>"
+            f"<span style='width:36px;text-align:right;color:#475569;font-weight:600;font-size:11px;'>{val:.2f}</span>"
+            f"</div>"
+        )
+    return "".join(rows)
+
+
+def _runner_ups_html(sf: ScoredField, result: SubmitResult) -> str:
+    """Show what fields ranked #2 and #3 (the ones NOT picked)."""
+    # Find fields ranked just below this one that weren't picked as questions
+    picked_fids = {q.field_id for q, _ in st.session_state.get("pending_questions", [])}
+    runners = []
+    for other in result.scored_fields:
+        if other.field_state.field_id in picked_fids:
+            continue
+        if other.rank > sf.rank:
+            runners.append(other)
+        if len(runners) >= 2:
+            break
+    if not runners:
+        return ""
+    items = ", ".join(
+        f"<b>#{r.rank}</b> {_field_label(r.field_state.field_id)} ({r.composite:.3f})"
+        for r in runners
+    )
+    return (
+        f"<div style='font-size:12px;color:#64748b;margin-top:6px;'>"
+        f"Runner-ups not selected: {items}"
+        f"</div>"
+    )
+
+
+def _review_overlap_html(result: SubmitResult, topics_list) -> str:
+    """Show which topics the review mentioned and were de-prioritized."""
+    if not result.tags:
+        return ""
+    topic_label_map = {t.topic_id: t.label for t in topics_list}
+    mentioned = [
+        topic_label_map.get(tid, tid)
+        for tid, tag in result.tags.items()
+        if tag.mentioned
+    ]
+    if not mentioned:
+        return ""
+    labels = ", ".join(f"<b>{m}</b>" for m in mentioned[:8])
+    return (
+        f"<div style='font-size:12px;color:#64748b;margin-top:6px;'>"
+        f"Your review mentioned: {labels}. "
+        f"These topics received a redundancy penalty so we ask about something new."
+        f"</div>"
+    )
+
+
+def _impact_preview_html(sf: ScoredField, sf_lookup: dict[str, ScoredField]) -> str:
+    """Show what answering this question will do for coverage."""
+    total = len(sf_lookup)
+    known = sum(1 for s in sf_lookup.values() if s.field_state.value_known)
+    if total == 0:
+        return ""
+    pct_now = round(100 * known / total)
+    pct_after = round(100 * (known + 1) / total) if not sf.field_state.value_known else pct_now
+    if pct_after == pct_now:
+        return ""
+    return (
+        f"<div style='font-size:12px;color:#16a34a;font-weight:600;margin-top:6px;'>"
+        f"Answering this raises coverage from {pct_now}% \u2192 {pct_after}%"
+        f"</div>"
+    )
 
 
 # ---------- state init ----------
@@ -873,6 +963,8 @@ with right:
                         f"<span class='cluster-badge'>{cluster_label}</span>",
                         unsafe_allow_html=True,
                     )
+
+                    # Plain-English explanation
                     explanation = _rich_why(
                         sf_match,
                         display_slot=display_slot,
@@ -882,7 +974,40 @@ with right:
                     )
                     st.markdown(
                         f"<div style='font-size:13px;color:#475569;line-height:1.6;padding:6px 0;'>"
-                        f"{explanation}"
+                        f"{explanation}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Component score bars
+                    st.markdown(
+                        f"<div style='margin:8px 0;'>{_component_bars_html(sf_match)}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Review overlap (which topics were de-prioritized)
+                    overlap = _review_overlap_html(result, topics)
+                    if overlap:
+                        st.markdown(overlap, unsafe_allow_html=True)
+
+                    # Runner-ups
+                    runners = _runner_ups_html(sf_match, result)
+                    if runners:
+                        st.markdown(runners, unsafe_allow_html=True)
+
+                    # Impact preview
+                    impact = _impact_preview_html(sf_match, sf_lookup)
+                    if impact:
+                        st.markdown(impact, unsafe_allow_html=True)
+
+                    # Raw formula
+                    st.markdown(
+                        f"<div class='score-detail'>"
+                        f"Score = <span class='val'>{sf_match.composite:.3f}</span><br>"
+                        f"&nbsp;&nbsp;= 0.55 \u00d7 no_data(<span class='val'>{sf_match.missing:.2f}</span>)"
+                        f" + 0.25 \u00d7 outdated(<span class='val'>{sf_match.stale:.2f}</span>)"
+                        f" + 0.15 \u00d7 rarely_discussed(<span class='val'>{sf_match.coverage:.2f}</span>)"
+                        f" \u2212 0.35 \u00d7 redundancy(<span class='val'>{sf_match.redundancy:.2f}</span>)"
+                        f" + 0.02"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
