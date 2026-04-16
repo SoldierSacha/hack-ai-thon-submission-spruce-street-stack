@@ -16,13 +16,14 @@ def test_render_question_rating_field_uses_rating_1_5():
     assert "No rating data" in q.reason or "rating" in q.reason.lower()
 
 
-def test_render_question_amenity_schema_is_yes_no():
+def test_render_question_amenity_schema_listing_gap_is_yes_no():
+    """Schema fields only become question targets via listing gap (cross-ref), which uses yes_no."""
     fs = FieldState(eg_property_id="p1", field_id="schema:property_amenity_spa", value_known=False)
     p = Property(eg_property_id="p1", city="Pompei", country="Italy",
                  star_rating=3.5, amenities={"spa": []})
     llm = MagicMock()
     llm.chat_text.return_value = "Does the hotel have a working spa?"
-    q = render_question(field_state=fs, property_=p, topic=None, llm=llm)
+    q = render_question(field_state=fs, property_=p, topic=None, llm=llm, is_listing_gap=True)
     assert q.input_type == "yes_no"
 
 

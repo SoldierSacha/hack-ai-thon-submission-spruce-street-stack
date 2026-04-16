@@ -96,17 +96,22 @@ def _hint_for(field_state: FieldState, topic: TaxonomyTopic | None) -> str:
     return fid.split(":", 1)[1].replace("_", " ") if ":" in fid else fid
 
 
-def _input_type_for(field_id: str):
+def _input_type_for(field_id: str, is_listing_gap: bool = False):
     if field_id.startswith("rating:"):
         return "rating_1_5"
-    if field_id.startswith("schema:property_amenity_"):
+    if is_listing_gap:
         return "yes_no"
     return "short_text"
 
 
-def _reason_for(field_state: FieldState) -> str:
+def _reason_for(field_state: FieldState, cross_ref_type: str | None = None) -> str:
     fid = field_state.field_id
     key = fid.split(":", 1)[1].replace("_", " ") if ":" in fid else fid
+    # Cross-reference reasons take priority — they're more specific.
+    if cross_ref_type == "verification_gap":
+        return f"The listing includes {key}-related amenities, but no guest has reviewed them."
+    if cross_ref_type == "listing_gap":
+        return f"Guests mention {key} but it's not documented in the property listing."
     if not field_state.value_known:
         if fid.startswith("rating:"):
             return f"No rating data for '{key}' on this property."
@@ -131,10 +136,13 @@ def render_question(
     property_: Property,
     topic: TaxonomyTopic | None,
     llm: LlmClient,
+    assertions: list[str] | None = None,
+    cross_ref_context: str | None = None,
+    is_listing_gap: bool = False,
     model: str = "gpt-4.1-mini",
 ) -> Question:
     """Use an LLM to phrase a single follow-up question targeted at field_state's gap."""
-    input_type = _input_type_for(field_state.field_id)
+    input_type = _input_type_for(field_state.field_id, is_listing_gap=is_listing_gap)
     current = _current_value_for(field_state, property_)
     hint = _hint_for(field_state, topic)
     cluster_context = (
@@ -142,24 +150,40 @@ def render_question(
         f"{property_.country or '?'}, "
         f"{property_.star_rating if property_.star_rating is not None else '?'}-star"
     )
-    user_prompt = (
-        f"{cluster_context}\n"
-        f"Topic: {hint}\n"
-        f"Current knowledge: {current}\n"
-        f"Required answer type: {input_type}\n"
-        f"Question:"
-    )
+
+    # Build context lines
+    lines = [
+        cluster_context,
+        f"Topic: {hint}",
+        f"Current knowledge: {current}",
+    ]
+    if assertions:
+        lines.append(f"Recent guest assertions: {'; '.join(assertions[:3])}")
+    if cross_ref_context:
+        lines.append(f"Cross-reference: {cross_ref_context}")
+    lines.append(f"Required answer type: {input_type}")
+    lines.append("Question:")
+
+    user_prompt = "\n".join(lines)
     raw = llm.chat_text(
         system=_SYSTEM_PROMPT, user=user_prompt, model=model, temperature=0.3
     )
     text = (raw or "").strip()
     if len(text) > 200:
-        # Keep just the first non-empty line — brevity already enforced by prompt.
         first_line = text.split("\n", 1)[0].strip()
         text = first_line or text[:200]
+
+    # Determine cross-ref type for the reason string
+    cross_ref_type = None
+    if cross_ref_context:
+        if field_state.field_id.startswith("topic:"):
+            cross_ref_type = "verification_gap"
+        elif field_state.field_id.startswith("schema:"):
+            cross_ref_type = "listing_gap"
+
     return Question(
         field_id=field_state.field_id,
         question_text=text,
         input_type=input_type,
-        reason=_reason_for(field_state),
+        reason=_reason_for(field_state, cross_ref_type=cross_ref_type),
     )

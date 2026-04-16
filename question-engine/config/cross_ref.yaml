@@ -1,0 +1,12 @@
+schema_to_topics:
+  property_amenity_food_and_drink: [breakfast, onsite_dining]
+  property_amenity_outdoor: [pool]
+  property_amenity_things_to_do: [pool, gym, spa]
+  property_amenity_spa: [spa]
+  property_amenity_business_services: [business_center]
+  property_amenity_accessibility: [accessibility]
+  pet_policy: [pet_friendly]
+  children_and_extra_bed_policy: [family_friendly]
+  check_in_instructions: [checkin_ease]
+
+high_velocity_topics: [recent_renovation]

@@ -88,15 +88,21 @@ def _parse_short_text(
     question: Question, answer_text: str, llm: LlmClient, model: str
 ) -> Answer:
     system = (
-        "Extract the factual content of the guest's answer in 20 words or fewer. "
+        "Extract the factual content of the guest's answer in 20 words or fewer, "
+        "and rate the sentiment on a 1-5 scale (1=very negative, 3=neutral, 5=very positive). "
         "If the answer is vague or off-topic, set abstain=true. Return JSON: "
-        '{"value": string or null, "abstain": true/false}.'
+        '{"value": string or null, "sentiment": 1-5 or null, "abstain": true/false}.'
     )
     user = f"Question: {question.question_text}\nAnswer: {answer_text}"
     result = llm.chat_json(system=system, user=user, model=model)
     value = result.get("value")
     if result.get("abstain") or value is None:
         return _answer(question, answer_text, None, "unscorable")
+    sentiment = result.get("sentiment")
+    if isinstance(sentiment, (int, float)) and 1 <= sentiment <= 5:
+        # Normalize 1-5 → [-1, 1] to match the EMA scale used by topic fields.
+        normalized = (sentiment - 3) / 2
+        return _answer(question, answer_text, normalized, "scored")
     return _answer(question, answer_text, str(value), "scored")
 
 
@@ -115,9 +121,9 @@ def parse_answer(
     if answer_text is None or answer_text == _SKIP_SENTINEL:
         return _answer(question, answer_text or "", None, "skipped")
 
-    # 2. Empty / trivially short — no LLM call.
+    # 2. Empty / whitespace-only — no LLM call.
     stripped = answer_text.strip()
-    if len(stripped) < 3:
+    if not stripped:
         return _answer(question, answer_text, None, "unscorable")
 
     # 3. Filler tokens — no LLM call.

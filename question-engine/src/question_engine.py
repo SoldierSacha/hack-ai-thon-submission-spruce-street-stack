@@ -137,7 +137,7 @@ def run_ask(property_id: str, review_text: str, today_override: str | None = Non
         repo=repo,
         llm=llm,
         taxonomy=topics,
-        topic_embeddings={},  # empty — redundancy penalty disabled without these
+        topic_embeddings={},
         field_cluster=build_field_cluster_map(topics),
     )
 

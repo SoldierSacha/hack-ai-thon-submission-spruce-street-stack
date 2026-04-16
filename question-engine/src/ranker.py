@@ -2,15 +2,10 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-import numpy as np
 import yaml
 
 from src.models import FieldState, TaxonomyTopic, ScoredField
-from src.scoring import missing_score, stale_score, coverage_gap_score
-
-
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+from src.scoring import missing_score, stale_score, stale_score_detail, coverage_gap_score, coverage_gap_detail, cross_ref_score
 
 
 def rank_fields(
@@ -18,36 +13,49 @@ def rank_fields(
     property_id: str,
     field_states: list[FieldState],
     today: date,
-    topic_embeddings: dict[str, np.ndarray],
-    review_embedding: np.ndarray | None,
     field_cluster: dict[str, str],
     weights_path: str = "config/weights.yaml",
+    cross_ref_path: str = "config/cross_ref.yaml",
+    total_reviews: int = 0,
 ) -> list[ScoredField]:
     """Score each field_state for `property_id` and return ScoredField objects sorted by descending score."""
     W = yaml.safe_load(Path(weights_path).read_text())
+    xref = yaml.safe_load(Path(cross_ref_path).read_text())
+    schema_to_topics = xref.get("schema_to_topics", {})
+    high_velocity = xref.get("high_velocity_topics", [])
+
+    # Build peer lookup for cross-ref scoring
+    peer_states: dict[str, FieldState] = {}
+    for fs in field_states:
+        if fs.eg_property_id == property_id:
+            peer_states[fs.field_id] = fs
+
     scored: list[ScoredField] = []
     for fs in field_states:
         if fs.eg_property_id != property_id:
             continue
         m = missing_score(fs)
-        s = stale_score(fs, today=today, time_horizon_days=W["time_horizon_days"])
-        c = coverage_gap_score(fs)
-        red = 0.0
-        if review_embedding is not None and fs.field_id.startswith("topic:"):
-            topic_id = fs.field_id.split(":", 1)[1]
-            if topic_id in topic_embeddings:
-                red = max(0.0, _cosine(review_embedding, topic_embeddings[topic_id]))
+        s_d = stale_score_detail(fs, today=today,
+                                 time_horizon_days=W["time_horizon_days"],
+                                 high_velocity_topics=high_velocity)
+        s = s_d["score"]
+        c_d = coverage_gap_detail(fs, total_reviews=total_reviews)
+        c = c_d["score"]
+        xr = cross_ref_score(fs, peer_states, schema_to_topics)
         composite = (
             W["w_missing"] * m
             + W["w_stale"] * s
             + W["w_coverage"] * c
-            - W["w_redundancy"] * red
-            + W["epsilon"]
+            + W["w_cross_ref"] * xr
         )
         scored.append(ScoredField(
             field_state=fs, composite=composite,
-            missing=m, stale=s, coverage=c, redundancy=red,
+            missing=m, stale=s, coverage=c, cross_ref=xr,
             cluster=field_cluster.get(fs.field_id, ""),
+            stale_age_days=s_d["age_days"],
+            stale_time_term=s_d["time_term"],
+            stale_drift_term=s_d["drift_term"],
+            coverage_response_rate=c_d["response_rate"],
         ))
     scored.sort(key=lambda x: -x.composite)
     for i, sf in enumerate(scored):
@@ -83,7 +91,7 @@ def build_field_cluster_map(topics: list[TaxonomyTopic]) -> dict[str, str]:
     - rating fields: static map
     - schema fields: static map
     """
-    # Static rating → cluster map (grouping the 15 sub-rating keys into coherent clusters).
+    # Static rating -> cluster map (grouping the 15 sub-rating keys into coherent clusters).
     rating_cluster = {
         "rating:overall": "overall",
         "rating:roomcleanliness": "room",
@@ -101,7 +109,7 @@ def build_field_cluster_map(topics: list[TaxonomyTopic]) -> dict[str, str]:
         "rating:ecofriendliness": "meta",
         "rating:onlinelisting": "meta",
     }
-    # Static schema → cluster map.
+    # Static schema -> cluster map.
     schema_cluster = {
         "schema:pet_policy": "policies",
         "schema:children_and_extra_bed_policy": "policies",

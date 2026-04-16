@@ -88,9 +88,14 @@ class ScoredField(BaseModel):
     missing: float
     stale: float
     coverage: float
-    redundancy: float
+    cross_ref: float = 0.0
     rank: int = 0
     cluster: str = ""
+    # Scoring intermediates for UI transparency
+    stale_age_days: int = 0
+    stale_time_term: float = 0.0
+    stale_drift_term: float = 0.0
+    coverage_response_rate: float = 0.0
 
 class Question(BaseModel):
     field_id: str
@@ -104,11 +109,23 @@ class EnrichmentMeta(BaseModel):
     embedding_dim: int = 0
     topics_tagged: int = 0
     topics_total: int = 0
+    original_text: str = ""
+    translated_text: str = ""
+    detected_topics: list[str] = Field(default_factory=list)
+    assertions_found: dict[str, str] = Field(default_factory=dict)
 
 class TagInfo(BaseModel):
     mentioned: bool = False
     sentiment: Optional[int] = None
     assertion: Optional[str] = None
+
+class PipelineStep(BaseModel):
+    step_id: str
+    label: str
+    status: Literal["pending", "running", "done", "skipped"] = "pending"
+    duration_ms: float = 0.0
+    summary: str = ""
+    detail: dict = Field(default_factory=dict)
 
 class SubmitResult(BaseModel):
     questions: list[Question]
@@ -116,6 +133,18 @@ class SubmitResult(BaseModel):
     enrichment: EnrichmentMeta
     total_fields: int = 0
     tags: dict[str, TagInfo] = Field(default_factory=dict)
+    pipeline_steps: list[PipelineStep] = Field(default_factory=list)
+    total_pipeline_ms: float = 0.0
+    contradictions: list[ContradictionAlert] = Field(default_factory=list)
+
+class ContradictionAlert(BaseModel):
+    schema_field: str              # e.g. "property_amenity_food_and_drink"
+    topic_id: str                  # e.g. "breakfast"
+    topic_label: str               # e.g. "Breakfast"
+    sentiment: float               # short_ema value (negative)
+    mention_count: int
+    recent_assertions: list[str] = Field(default_factory=list)
+    summary: str = ""              # human-readable explanation
 
 class Answer(BaseModel):
     field_id: str

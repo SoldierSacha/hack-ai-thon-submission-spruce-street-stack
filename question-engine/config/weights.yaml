@@ -1,8 +1,7 @@
 w_missing: 0.55
 w_stale: 0.25
 w_coverage: 0.15
-w_redundancy: 0.35
-epsilon: 0.02
+w_cross_ref: 0.20
 min_score_for_second_question: 0.40
 short_ema_half_life: 5
 long_ema_half_life: 30

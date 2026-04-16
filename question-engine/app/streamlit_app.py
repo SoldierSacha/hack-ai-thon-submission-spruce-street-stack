@@ -15,7 +15,7 @@ from src.llm import LlmClient
 from src.taxonomy import load_taxonomy, SCHEMA_DESCRIPTION_FIELDS
 from src.ranker import build_field_cluster_map, rank_fields
 from src.flow import AskFlow
-from src.models import SUB_RATING_KEYS, FieldState, ScoredField, SubmitResult
+from src.models import SUB_RATING_KEYS, RatingBreakdown, FieldState, ScoredField, SubmitResult, PipelineStep
 
 try:
     from streamlit_mic_recorder import speech_to_text
@@ -50,6 +50,7 @@ def get_flow():
         topic_embeddings={},
         field_cluster=build_field_cluster_map(topics),
         weights_path=str(REPO_ROOT / "config" / "weights.yaml"),
+        cross_ref_path=str(REPO_ROOT / "config" / "cross_ref.yaml"),
     )
 
 
@@ -133,6 +134,7 @@ st.markdown("""
 .pill-stale   { background: #fef3c7; color: #d97706; }
 .pill-drifting { background: #fef3c7; color: #d97706; }
 .pill-missing { background: #fee2e2; color: #ef4444; }
+.pill-neutral { background: #f3f4f6; color: #6b7280; }
 
 /* Flash animation */
 .flash { animation: flash 1.8s ease-out; background: transparent; }
@@ -282,6 +284,120 @@ st.markdown("""
     text-align: center;
     margin-top: 2px;
 }
+
+/* Pipeline stepper */
+.pipeline-header {
+    font-size: 13px;
+    font-weight: 700;
+    color: #00355F;
+    margin: 16px 0 8px 0;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.pipeline-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #f1f5f9;
+    margin-bottom: 12px;
+    gap: 2px;
+}
+.pipeline-seg {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+.pipeline-step {
+    display: flex;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 13px;
+    border-bottom: 1px solid #f1f5f9;
+    gap: 8px;
+}
+.pipeline-step:last-child { border-bottom: none; }
+.step-icon { font-size: 14px; font-weight: 700; width: 20px; text-align: center; }
+.step-label { width: 200px; color: #1e293b; font-weight: 600; }
+.step-summary { flex: 1; color: #64748b; }
+.step-time {
+    width: 70px;
+    text-align: right;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+/* Scoring leaderboard */
+.leaderboard {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+.lb-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    gap: 4px;
+}
+.lb-row:last-child { border-bottom: none; }
+.lb-header {
+    font-weight: 700;
+    color: #475569;
+    background: #f8fafc;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.lb-picked { background: #eef2ff; border-left: 3px solid #6366f1; }
+.lb-rank { width: 30px; text-align: center; font-weight: 600; color: #6366f1; }
+.lb-field { flex: 1; color: #1e293b; }
+.lb-score { width: 50px; text-align: right; font-weight: 700; font-family: monospace; }
+.lb-m, .lb-s, .lb-c, .lb-x { width: 40px; text-align: right; font-family: monospace; color: #64748b; }
+
+/* Architecture / How It Works */
+.arch-flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    padding: 12px 0;
+}
+.arch-box {
+    background: #f0f9ff;
+    border: 1.5px solid #bae6fd;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #0369a1;
+    text-align: center;
+    min-width: 100px;
+}
+.arch-arrow { color: #94a3b8; font-size: 16px; }
+.arch-desc {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 2px;
+    font-weight: 400;
+}
+
+/* Coverage delta */
+.coverage-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #16a34a;
+    padding: 4px 12px;
+    background: #dcfce7;
+    border-radius: 8px;
+    margin: 4px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -416,11 +532,20 @@ def field_status(fs: FieldState | None, today: date) -> tuple[str, str]:
 
 def score_bar_html(sf: ScoredField) -> str:
     """Return HTML for a tiny stacked score bar with a hover tooltip."""
-    total = sf.missing + sf.stale + sf.coverage + 0.001
-    m_pct = sf.missing / total * 100
-    s_pct = sf.stale / total * 100
-    c_pct = sf.coverage / total * 100
-    tip = f"No data yet {sf.missing:.0%} · Outdated {sf.stale:.0%} · Rarely discussed {sf.coverage:.0%}"
+    # Round to 2dp so the bar proportions match the displayed tooltip values
+    m = round(sf.missing, 2)
+    s = round(sf.stale, 2)
+    c = round(sf.coverage, 2)
+    xr = round(sf.cross_ref, 2)
+    total = m + s + c + xr
+    if total == 0:
+        m_pct = s_pct = c_pct = xr_pct = 0.0
+    else:
+        m_pct = m / total * 100
+        s_pct = s / total * 100
+        xr_pct = xr / total * 100
+        c_pct = 100.0 - m_pct - s_pct - xr_pct  # remainder to avoid rounding gaps
+    tip = f"No data yet {m:.2f} · Outdated {s:.2f} · Rarely discussed {c:.2f} · Cross-ref {xr:.2f}"
     return (
         f"<span class='score-bar-wrap'>"
         f"<span class='score-tip'>{tip}</span>"
@@ -428,6 +553,7 @@ def score_bar_html(sf: ScoredField) -> str:
         f"<span class='seg-m' style='width:{m_pct:.0f}%'></span>"
         f"<span class='seg-s' style='width:{s_pct:.0f}%'></span>"
         f"<span class='seg-c' style='width:{c_pct:.0f}%'></span>"
+        f"<span style='display:inline-block;width:{xr_pct:.0f}%;height:100%;background:#10b981;border-radius:0 3px 3px 0;'></span>"
         f"</span></span>"
     )
 
@@ -435,7 +561,7 @@ def score_bar_html(sf: ScoredField) -> str:
 def _topic_display(fs: FieldState | None) -> tuple[str, str]:
     """Return (display_text, css_class) for a topic field state."""
     if not fs or not fs.value_known:
-        return ("-- no mentions", "pill-missing")
+        return ("No Mentions", "pill-neutral")
     ema = fs.short_ema
     count = fs.mention_count
     if ema is not None:
@@ -513,9 +639,13 @@ def _rich_why(
                     f"to <b>maximize new information</b>."
                 )
 
-    # Redundancy note
-    if sf.redundancy > 0.3:
-        parts.append("Your review already touched on related topics, so this was slightly de-prioritized.")
+    # Cross-reference note
+    if sf.cross_ref > 0.01:
+        fid = sf.field_state.field_id
+        if fid.startswith("topic:"):
+            parts.append("The property listing includes related amenities, but <b>no guest has confirmed</b> them yet.")
+        elif fid.startswith("schema:"):
+            parts.append("Guests <b>mention this in reviews</b> but it's missing from the official listing.")
 
     return " ".join(parts)
 
@@ -526,7 +656,7 @@ def _component_bars_html(sf: ScoredField) -> str:
         ("No data yet", sf.missing, "#ef4444"),
         ("Outdated info", sf.stale, "#d97706"),
         ("Rarely discussed", sf.coverage, "#6366f1"),
-        ("Redundancy penalty", sf.redundancy, "#94a3b8"),
+        ("Cross-reference", sf.cross_ref, "#10b981"),
     ]
     rows = []
     for label, val, color in components:
@@ -584,7 +714,7 @@ def _review_overlap_html(result: SubmitResult, topics_list) -> str:
     return (
         f"<div style='font-size:12px;color:#64748b;margin-top:6px;'>"
         f"Your review mentioned: {labels}. "
-        f"These topics received a redundancy penalty so we ask about something new."
+        f"These topics were covered by your review and excluded from follow-up questions."
         f"</div>"
     )
 
@@ -604,6 +734,141 @@ def _impact_preview_html(sf: ScoredField, sf_lookup: dict[str, ScoredField]) -> 
         f"Answering this raises coverage from {pct_now}% \u2192 {pct_after}%"
         f"</div>"
     )
+
+
+# ---------- sub-rating labels (excluding overall, shown separately) ----------
+_SUB_RATING_LABELS: list[tuple[str, str]] = [
+    ("roomcleanliness", "Room Cleanliness"),
+    ("roomcomfort", "Room Comfort"),
+    ("roomquality", "Room Quality"),
+    ("roomamenitiesscore", "Room Amenities"),
+    ("hotelcondition", "Hotel Condition"),
+    ("service", "Service"),
+    ("checkin", "Check-in"),
+    ("communication", "Communication"),
+    ("convenienceoflocation", "Location Convenience"),
+    ("neighborhoodsatisfaction", "Neighbourhood"),
+    ("location", "Location"),
+    ("valueformoney", "Value for Money"),
+    ("ecofriendliness", "Eco-friendliness"),
+    ("onlinelisting", "Online Listing Accuracy"),
+]
+
+_RATING_OPTIONS = ["\u2014", 1, 2, 3, 4, 5]  # em-dash sentinel = not rated
+
+
+def _render_pipeline_stepper(steps: list[PipelineStep], total_ms: float):
+    """Render a visual pipeline stepper with timing bar and step details."""
+    st.markdown(
+        f"<div class='pipeline-header'>Pipeline completed in {total_ms:,.0f} ms</div>",
+        unsafe_allow_html=True,
+    )
+    # Proportional timing bar
+    bar_parts = []
+    for s in steps:
+        w = (s.duration_ms / total_ms * 100) if total_ms > 0 else (100 / max(len(steps), 1))
+        color = {"done": "#16a34a", "skipped": "#94a3b8"}.get(s.status, "#6366f1")
+        bar_parts.append(
+            f"<div class='pipeline-seg' style='width:{w:.1f}%;background:{color};'"
+            f" title='{s.label}: {s.duration_ms:.0f}ms'></div>"
+        )
+    st.markdown(
+        "<div class='pipeline-bar'>" + "".join(bar_parts) + "</div>",
+        unsafe_allow_html=True,
+    )
+    # Step-by-step detail rows
+    rows = []
+    for s in steps:
+        icon = {"done": "&#10003;", "skipped": "&#8212;"}.get(s.status, "&#9675;")
+        color = {"done": "#16a34a", "skipped": "#94a3b8"}.get(s.status, "#6366f1")
+        rows.append(
+            f"<div class='pipeline-step'>"
+            f"<span class='step-icon' style='color:{color};'>{icon}</span>"
+            f"<span class='step-label'>{s.label}</span>"
+            f"<span class='step-summary'>{s.summary}</span>"
+            f"<span class='step-time'>{s.duration_ms:,.0f} ms</span>"
+            f"</div>"
+        )
+    st.markdown("".join(rows), unsafe_allow_html=True)
+
+
+def _render_scoring_leaderboard(scored_fields: list[ScoredField], picked_fids: set[str]):
+    """Render a scrollable table of ALL ranked fields with scores."""
+    with st.expander(f"Scoring leaderboard \u2014 {len(scored_fields)} fields ranked", expanded=False):
+        header = (
+            "<div class='lb-row lb-header'>"
+            "<span class='lb-rank'>#</span>"
+            "<span class='lb-field'>Field</span>"
+            "<span class='lb-score'>Score</span>"
+            "<span class='lb-m'>Miss</span>"
+            "<span class='lb-s'>Stale</span>"
+            "<span class='lb-c'>Cov</span>"
+            "<span class='lb-x'>XRef</span>"
+            "</div>"
+        )
+        rows = [header]
+        for sf in scored_fields[:30]:
+            is_picked = sf.field_state.field_id in picked_fids
+            highlight = "lb-picked" if is_picked else ""
+            label = _field_label(sf.field_state.field_id)
+            picked_marker = " \u2190 asked" if is_picked else ""
+            rows.append(
+                f"<div class='lb-row {highlight}'>"
+                f"<span class='lb-rank'>{sf.rank}</span>"
+                f"<span class='lb-field'>{label}{picked_marker}</span>"
+                f"<span class='lb-score'>{sf.composite:.3f}</span>"
+                f"<span class='lb-m'>{sf.missing:.2f}</span>"
+                f"<span class='lb-s'>{sf.stale:.2f}</span>"
+                f"<span class='lb-c'>{sf.coverage:.2f}</span>"
+                f"<span class='lb-x'>{sf.cross_ref:.2f}</span>"
+                f"</div>"
+            )
+        st.markdown(
+            "<div class='leaderboard'>" + "".join(rows) + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_how_it_works():
+    """Render the static architecture diagram."""
+    steps = [
+        ("Detect Language", "langdetect identifies review language"),
+        ("Translate", "LLM translates non-English to English"),
+        ("Embed", "text-embedding-3-small creates 384d vector"),
+        ("Tag Topics", "LLM classifies against 28 taxonomy topics"),
+        ("Build Signals", "EMA aggregation of ratings, schema, topics"),
+        ("Score Gaps", "4-factor scoring: missing, stale, coverage, cross-ref"),
+        ("Rank Fields", "Weighted composite sort across all fields"),
+        ("Pick Questions", "Cluster-diverse top-2 selection"),
+        ("Render Questions", "LLM phrases natural follow-up questions"),
+    ]
+    boxes = []
+    for i, (name, desc) in enumerate(steps):
+        if i > 0:
+            boxes.append("<span class='arch-arrow'>\u2192</span>")
+        boxes.append(
+            f"<span class='arch-box'>{name}<div class='arch-desc'>{desc}</div></span>"
+        )
+    st.markdown(
+        "<div class='arch-flow'>" + "".join(boxes) + "</div>"
+        "<div style='font-size:12px;color:#64748b;margin-top:8px;'>"
+        "Each step is timed and its output is shown below after you submit a review. "
+        "Weights: 55% missing + 25% stale + 15% coverage + 20% cross-ref. "
+        "Questions are chosen from different clusters to maximize new information."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _build_rating_breakdown(overall_val, sub_vals: dict[str, object]) -> RatingBreakdown | None:
+    """Convert UI widget values into a RatingBreakdown, treating '\u2014' as None."""
+    data: dict[str, int] = {}
+    if overall_val != "\u2014":
+        data["overall"] = int(overall_val)
+    for key, val in sub_vals.items():
+        if val != "\u2014":
+            data[key] = int(val)
+    return RatingBreakdown(**data) if data else None
 
 
 # ---------- state init ----------
@@ -658,6 +923,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+with st.expander("How It Works \u2014 System Architecture", expanded=False):
+    _render_how_it_works()
+
 # Property picker lock
 _has_unanswered = any(not a for _, a in st.session_state.get("pending_questions", []))
 _active = st.session_state.get("active_property_id")
@@ -675,12 +943,17 @@ with picker_cols[0]:
         label_visibility="collapsed",
     )
 with picker_cols[1]:
-    if st.button("Reset", help="Clear session answers (DB untouched)", width="stretch"):
+    if st.button("Reset", help="Purge demo reviews and restore original data", width="stretch"):
+        affected = repo.purge_live_data()
+        for pid in affected:
+            flow._reaggregate_property(pid)
+        flow._pending_review_id.clear()
         for k in [
             "pending_questions", "answered_fields", "last_flashed_field",
             "review_text", "active_property_id", "submit_result",
         ]:
             st.session_state.pop(k, None)
+        _property_label_cache.clear()
         _init_state()
         st.rerun()
 
@@ -688,7 +961,7 @@ prop = repo.get_property(property_id)
 today = _max_review_date(repo)
 
 # ---------- ScoredField lookup ----------
-# Use SubmitResult if available (has redundancy from the review), otherwise
+# Use SubmitResult if available (has cross-ref context), otherwise
 # score all fields on load so the mini bars always appear.
 result: SubmitResult | None = st.session_state.get("submit_result")
 sf_lookup: dict[str, ScoredField] = {}
@@ -702,10 +975,10 @@ else:
             property_id=property_id,
             field_states=_all_fs,
             today=today,
-            topic_embeddings={},
-            review_embedding=None,
             field_cluster=build_field_cluster_map(topics),
             weights_path=str(REPO_ROOT / "config" / "weights.yaml"),
+            cross_ref_path=str(REPO_ROOT / "config" / "cross_ref.yaml"),
+            total_reviews=len(repo.list_reviews_for(property_id)),
         )
         for sf in _ranked:
             sf_lookup[sf.field_state.field_id] = sf
@@ -851,11 +1124,92 @@ with left:
                     unsafe_allow_html=True,
                 )
 
+    # --- Listing Alerts (contradictions) ---
+    import yaml as _yaml
+    _xref = _yaml.safe_load(open(str(REPO_ROOT / "config" / "cross_ref.yaml")).read())
+    _s2t = _xref.get("schema_to_topics", {})
+    _peer = {fs.field_id: fs for fs in all_fs}
+
+    from src.scoring import find_contradictions as _find_contradictions
+    _contras = _find_contradictions(_peer, _s2t)
+
+    if _contras:
+        st.markdown(
+            f"<div class='section-hdr' style='color:#dc2626;'>"
+            f"Listing Alerts ({len(_contras)})</div>",
+            unsafe_allow_html=True,
+        )
+        for schema_key, topic_id in _contras:
+            tfs = _peer.get(f"topic:{topic_id}")
+            topic_obj = next((t for t in topics if t.topic_id == topic_id), None)
+            topic_label = topic_obj.label if topic_obj else topic_id
+            ema_val = f"{tfs.short_ema:+.2f}" if tfs and tfs.short_ema is not None else "?"
+            mention_ct = tfs.mention_count if tfs else 0
+
+            # Fetch only negative assertions for evidence
+            _assertions = repo.get_recent_assertions(
+                property_id, f"topic:{topic_id}", limit=3, sentiment_filter=-1,
+            )
+            assertion_html = ""
+            if _assertions:
+                def _truncate(text: str, max_len: int = 80) -> str:
+                    if len(text) <= max_len:
+                        return text
+                    cut = text[:max_len].rsplit(" ", 1)[0]
+                    return (cut or text[:max_len]) + "\u2026"
+                quotes = " &middot; ".join(
+                    f"&ldquo;{_truncate(a)}&rdquo;" for a in _assertions
+                )
+                assertion_html = (
+                    f"<div style='font-size:11px;color:#64748b;margin-top:4px;'>"
+                    f"{quotes}</div>"
+                )
+
+            # What the listing says
+            schema_fs = _peer.get(f"schema:{schema_key}")
+            listed_as = ""
+            if schema_fs and schema_fs.value_known:
+                pretty_key = schema_key.replace("_", " ").replace("property amenity ", "")
+                listed_as = (
+                    f"<div style='font-size:11px;color:#94a3b8;margin-top:2px;'>"
+                    f"Listed under: {pretty_key}</div>"
+                )
+
+            st.markdown(
+                f"<div style='background:#fef2f2;border:1px solid #fecaca;border-radius:8px;"
+                f"padding:10px 14px;margin:6px 0;'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                f"<span style='font-weight:600;color:#dc2626;font-size:13px;'>"
+                f"{topic_label}</span>"
+                f"<span style='font-size:11px;color:#ef4444;font-weight:600;'>"
+                f"sentiment {ema_val} &middot; {mention_ct} reviews</span>"
+                f"</div>"
+                f"{assertion_html}"
+                f"{listed_as}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
 # ========================
 # RIGHT COLUMN — Review & Question Flow
 # ========================
 with right:
-    st.markdown("<div class='section-hdr'>Write your review</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-hdr'>Leave a review</div>", unsafe_allow_html=True)
+
+    # Overall star rating
+    overall_rating = st.select_slider(
+        "Overall rating",
+        options=_RATING_OPTIONS,
+        value="\u2014",
+        key="overall_rating",
+    )
+
+    # Review title
+    review_title = st.text_input(
+        "Review title (optional)",
+        key="review_title_input",
+        placeholder="Summarize your stay in a few words...",
+    )
 
     # Voice input
     if MIC_AVAILABLE:
@@ -874,16 +1228,39 @@ with right:
         st.caption("(Install `streamlit-mic-recorder` for voice input.)")
 
     review_text = st.text_area(
-        "Your review (or leave blank for cold-start demo)",
+        "Your review",
         key="review_input",
         height=120,
         label_visibility="collapsed",
         placeholder="Write your review here, or leave blank to see cold-start gap analysis...",
     )
 
+    # Sub-category ratings (collapsed by default)
+    sub_rating_vals: dict[str, object] = {}
+    with st.expander("Rate specific categories (optional)"):
+        sub_col1, sub_col2 = st.columns(2)
+        for i, (key, label) in enumerate(_SUB_RATING_LABELS):
+            with sub_col1 if i % 2 == 0 else sub_col2:
+                sub_rating_vals[key] = st.select_slider(
+                    label,
+                    options=_RATING_OPTIONS,
+                    value="\u2014",
+                    key=f"sub_rating_{key}",
+                )
+
+    # Build RatingBreakdown from UI values
+    rating_breakdown = _build_rating_breakdown(overall_rating, sub_rating_vals)
+
     if st.button("Submit review", type="primary", key="submit_review", width="stretch"):
+        if overall_rating == "\u2014":
+            st.warning("An overall rating is required to submit a review.")
+            st.stop()
         with st.spinner("Analyzing review \u2014 detecting language, embedding, tagging topics, scoring gaps..."):
-            result = flow.submit_review(property_id, review_text, today=today)
+            result = flow.submit_review(
+                property_id, review_text, today=today,
+                rating=rating_breakdown,
+                review_title=review_title or None,
+            )
         st.session_state.pending_questions = [(q, False) for q in result.questions]
         st.session_state.submit_result = result
         st.session_state.review_text = review_text
@@ -891,18 +1268,38 @@ with right:
         st.session_state.pending_review_id = flow._pending_review_id.get(property_id)
         st.rerun()
 
-    # Enrichment strip (shows after submit)
+    # Pipeline stepper + enrichment (shows after submit)
     if result and st.session_state.get("active_property_id") == property_id:
+        # Pipeline stepper
+        if result.pipeline_steps:
+            st.markdown("<div class='section-hdr'>Processing pipeline</div>", unsafe_allow_html=True)
+            _render_pipeline_stepper(result.pipeline_steps, result.total_pipeline_ms)
+
+        # Enrichment chip strip
         enr = result.enrichment
         st.markdown(
             f"<div class='enrich-strip'>"
-            f"<span class='enrich-chip enrich-lang'>Lang: {enr.lang}</span>"
+            f"<span class='enrich-chip enrich-lang'>Lang: {enr.lang.upper()}</span>"
             f"<span class='enrich-chip enrich-trans'>{'Translated' if enr.translated else 'Native EN'}</span>"
             f"<span class='enrich-chip enrich-embed'>Embed: {enr.embedding_dim}d</span>"
             f"<span class='enrich-chip enrich-topics'>Topics: {enr.topics_tagged}/{enr.topics_total}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
+
+        # Translation detail (if translated)
+        if enr.translated and enr.original_text:
+            with st.expander("Translation detail", expanded=False):
+                st.markdown(f"**Original ({enr.lang.upper()}):** {enr.original_text[:300]}")
+                st.markdown(f"**English:** {enr.translated_text[:300]}")
+
+        # Assertions extracted
+        if enr.assertions_found:
+            topic_label_map = {t.topic_id: t.label for t in topics}
+            with st.expander(f"Assertions extracted ({len(enr.assertions_found)})", expanded=False):
+                for tid, assertion in enr.assertions_found.items():
+                    tlabel = topic_label_map.get(tid, tid)
+                    st.markdown(f"- **{tlabel}**: _{assertion}_")
 
         # Show which topics the review mentioned
         if result.tags:
@@ -936,6 +1333,11 @@ with right:
                     unsafe_allow_html=True,
                 )
 
+        # Scoring leaderboard
+        if result.scored_fields:
+            picked_fids = {q.field_id for q, _ in st.session_state.get("pending_questions", [])}
+            _render_scoring_leaderboard(result.scored_fields, picked_fids)
+
     # Follow-up questions
     if st.session_state.pending_questions:
         st.markdown("<div class='section-hdr'>Follow-up questions</div>", unsafe_allow_html=True)
@@ -948,18 +1350,18 @@ with right:
             st.markdown(
                 f"<div class='q-card'>"
                 f"<div class='q-text'>{q.question_text}</div>"
-                f"<div class='q-reason'>Why we asked: {q.reason}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
-            # "Why this question?" expander with rich explanation
-            sf_match = sf_lookup.get(q.field_id) if result else None
+            # "Why this question?" expander — always expanded for demo transparency
+            sf_match = sf_lookup.get(q.field_id)
             if sf_match:
-                with st.expander("Why this question?", expanded=False):
+                with st.expander("Why this question?", expanded=True):
                     cluster_label = CLUSTER_LABELS.get(sf_match.cluster or "", sf_match.cluster or "").title()
+                    total_fields = result.total_fields if result else len(sf_lookup)
                     st.markdown(
-                        f"<span class='rank-badge'>Rank #{sf_match.rank} of {result.total_fields}</span>"
+                        f"<span class='rank-badge'>Rank #{sf_match.rank} of {total_fields}</span>"
                         f"<span class='cluster-badge'>{cluster_label}</span>",
                         unsafe_allow_html=True,
                     )
@@ -985,14 +1387,16 @@ with right:
                     )
 
                     # Review overlap (which topics were de-prioritized)
-                    overlap = _review_overlap_html(result, topics)
-                    if overlap:
-                        st.markdown(overlap, unsafe_allow_html=True)
+                    if result:
+                        overlap = _review_overlap_html(result, topics)
+                        if overlap:
+                            st.markdown(overlap, unsafe_allow_html=True)
 
                     # Runner-ups
-                    runners = _runner_ups_html(sf_match, result)
-                    if runners:
-                        st.markdown(runners, unsafe_allow_html=True)
+                    if result:
+                        runners = _runner_ups_html(sf_match, result)
+                        if runners:
+                            st.markdown(runners, unsafe_allow_html=True)
 
                     # Impact preview
                     impact = _impact_preview_html(sf_match, sf_lookup)
@@ -1006,11 +1410,41 @@ with right:
                         f"&nbsp;&nbsp;= 0.55 \u00d7 no_data(<span class='val'>{sf_match.missing:.2f}</span>)"
                         f" + 0.25 \u00d7 outdated(<span class='val'>{sf_match.stale:.2f}</span>)"
                         f" + 0.15 \u00d7 rarely_discussed(<span class='val'>{sf_match.coverage:.2f}</span>)"
-                        f" \u2212 0.35 \u00d7 redundancy(<span class='val'>{sf_match.redundancy:.2f}</span>)"
-                        f" + 0.02"
+                        f" + 0.20 \u00d7 cross_ref(<span class='val'>{sf_match.cross_ref:.2f}</span>)"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+
+                    # Scoring intermediates
+                    intermediates = []
+                    if sf_match.stale_age_days > 0:
+                        intermediates.append(
+                            f"Data age: <span class='val'>{sf_match.stale_age_days}</span> days "
+                            f"(time_term={sf_match.stale_time_term:.2f}"
+                            f"{', drift detected!' if sf_match.stale_drift_term > 0 else ''})"
+                        )
+                    if sf_match.coverage_response_rate > 0:
+                        intermediates.append(
+                            f"Response rate: <span class='val'>"
+                            f"{sf_match.coverage_response_rate:.1%}</span> of reviews"
+                        )
+                    fs_ = sf_match.field_state
+                    if fs_.mention_count > 0:
+                        intermediates.append(
+                            f"Mentioned in <span class='val'>{fs_.mention_count}</span> reviews"
+                        )
+                    if fs_.short_ema is not None and fs_.long_ema is not None:
+                        intermediates.append(
+                            f"EMA: short=<span class='val'>{fs_.short_ema:.2f}</span>, "
+                            f"long=<span class='val'>{fs_.long_ema:.2f}</span>"
+                        )
+                    if intermediates:
+                        st.markdown(
+                            "<div class='score-detail'>"
+                            + "<br>".join(intermediates)
+                            + "</div>",
+                            unsafe_allow_html=True,
+                        )
             display_slot += 1
 
             # Input widget
@@ -1041,7 +1475,6 @@ with right:
                         st.session_state[input_key] = voice
                 submit_text = st.text_input(
                     "Your answer",
-                    value=st.session_state.get(f"text_{idx}", ""),
                     key=input_key,
                 )
 
@@ -1053,12 +1486,31 @@ with right:
                         saved_id = st.session_state.get("pending_review_id")
                         if saved_id:
                             flow._pending_review_id[active_pid] = saved_id
+                    # Capture pre-answer coverage for delta display
+                    pre_fs = repo.list_field_states_for(active_pid)
+                    pre_known = sum(1 for fs in pre_fs if fs.value_known)
+                    pre_total = len(pre_fs)
                     with st.spinner("Updating property info..."):
                         answer = flow.submit_answer(active_pid, q, submit_text, today=today)
                     st.session_state.pending_questions[idx] = (q, True)
+                    st.session_state.submit_result = None
                     if answer.status == "scored":
                         st.session_state.last_flashed_field = q.field_id
-                        st.success(f"Saved: {answer.parsed_value}")
+                        # Compute coverage delta
+                        post_fs = repo.list_field_states_for(active_pid)
+                        post_known = sum(1 for fs in post_fs if fs.value_known)
+                        if pre_total > 0 and post_known > pre_known:
+                            pct_before = round(100 * pre_known / pre_total)
+                            pct_after = round(100 * post_known / pre_total)
+                            st.success(f"Saved: {answer.parsed_value}")
+                            st.markdown(
+                                f"<div class='coverage-delta'>"
+                                f"Coverage: {pct_before}% \u2192 {pct_after}%"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.success(f"Saved: {answer.parsed_value}")
                     elif answer.status == "unscorable":
                         st.warning("Couldn't parse that answer \u2014 recording as unscorable.")
                     st.rerun()
@@ -1067,6 +1519,7 @@ with right:
                     active_pid = st.session_state.get("active_property_id") or property_id
                     flow.submit_answer(active_pid, q, None, today=today)
                     st.session_state.pending_questions[idx] = (q, True)
+                    st.session_state.submit_result = None
                     st.rerun()
 
         # Completion message

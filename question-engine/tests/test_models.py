@@ -35,7 +35,7 @@ def test_scored_field_stores_component_scores():
     fs = FieldState(eg_property_id="p1", field_id="topic:wifi", value_known=False)
     sf = ScoredField(
         field_state=fs, composite=0.72,
-        missing=1.0, stale=0.0, coverage=0.85, redundancy=0.12,
+        missing=1.0, stale=0.0, coverage=0.85, cross_ref=0.12,
         rank=1, cluster="connectivity",
     )
     assert sf.composite == 0.72
@@ -50,7 +50,7 @@ def test_submit_result_bundles_questions_and_metadata():
                  input_type="rating_1_5", reason="No data")
     fs = FieldState(eg_property_id="p1", field_id="rating:checkin", value_known=False)
     sf = ScoredField(field_state=fs, composite=0.72, missing=1.0, stale=0.0,
-                     coverage=0.85, redundancy=0.0, rank=1, cluster="service")
+                     coverage=0.85, cross_ref=0.0, rank=1, cluster="service")
     result = SubmitResult(questions=[q], scored_fields=[sf], enrichment=meta, total_fields=58)
     assert len(result.questions) == 1
     assert result.enrichment.lang == "de"

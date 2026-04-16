@@ -19,6 +19,11 @@ htmlcov/
 question-engine/.env
 question-engine/data/state.sqlite
 question-engine/data/cache/
+question-engine/data/question_engine.db
+
+# Node
+node_modules/
+
 
 # Editors
 .vscode/

@@ -211,6 +211,34 @@ class Repo:
         ).fetchall()
         return [FieldState.model_validate_json(r["raw_json"]) for r in rows]
 
+    def get_recent_assertions(self, pid: str, field_id: str, limit: int = 5,
+                              sentiment_filter: int | None = None) -> list[str]:
+        """Return the most recent non-null assertions for a (property, field) pair.
+
+        If sentiment_filter is set (e.g. -1), only return assertions from
+        reviews where the topic had that sentiment value.
+        """
+        if sentiment_filter is not None:
+            rows = self._conn.execute(
+                """SELECT rt.assertion FROM review_tags rt
+                JOIN reviews r ON rt.review_id = r.review_id
+                WHERE r.eg_property_id = ? AND rt.field_id = ?
+                AND rt.assertion IS NOT NULL AND rt.mentioned = 1
+                AND rt.sentiment = ?
+                ORDER BY r.acquisition_date DESC LIMIT ?""",
+                (pid, field_id, sentiment_filter, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT rt.assertion FROM review_tags rt
+                JOIN reviews r ON rt.review_id = r.review_id
+                WHERE r.eg_property_id = ? AND rt.field_id = ?
+                AND rt.assertion IS NOT NULL AND rt.mentioned = 1
+                ORDER BY r.acquisition_date DESC LIMIT ?""",
+                (pid, field_id, limit),
+            ).fetchall()
+        return [r["assertion"] for r in rows]
+
     # --- answers (append-only) ---
 
     def record_answer(self, review_id: str, answer: Answer) -> None:
@@ -219,6 +247,26 @@ class Repo:
                 "INSERT INTO answers(review_id, field_id, raw_json) VALUES (?, ?, ?)",
                 (review_id, answer.field_id, answer.model_dump_json()),
             )
+
+    # --- demo reset ---
+
+    def purge_live_data(self) -> set[str]:
+        """Delete all live-submitted reviews, their tags, and answers. Returns affected property_ids."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT eg_property_id FROM reviews WHERE review_id LIKE '%:live:%'"
+        ).fetchall()
+        affected = {r["eg_property_id"] for r in rows}
+        with self._conn:
+            self._conn.execute("DELETE FROM answers WHERE review_id LIKE '%:live:%'")
+            self._conn.execute("DELETE FROM review_tags WHERE review_id LIKE '%:live:%'")
+            self._conn.execute("DELETE FROM reviews WHERE review_id LIKE '%:live:%'")
+            # Wipe field_state for affected properties so _reaggregate_property
+            # rebuilds from only the original (non-live) reviews.
+            for pid in affected:
+                self._conn.execute(
+                    "DELETE FROM field_state WHERE eg_property_id = ?", (pid,)
+                )
+        return affected
 
     # --- llm_cache ---
 

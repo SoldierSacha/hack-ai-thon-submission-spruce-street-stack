@@ -102,7 +102,7 @@ def test_schema_populated_amenity_is_known():
     states = build_schema_field_states([p])
     spa = next(s for s in states if s.field_id == "schema:property_amenity_spa")
     assert spa.value_known is True
-    assert spa.mention_count == 1
+    assert spa.mention_count == 0  # schema fields aren't mentioned in reviews
 
 def test_schema_policy_string_field():
     p1 = Property(eg_property_id="p1", pet_policy="No pets allowed.")

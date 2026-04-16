@@ -89,7 +89,7 @@ def build_schema_field_states(
                 last_confirmed_date=last_confirmed,
                 short_ema=None,
                 long_ema=None,
-                mention_count=1 if value_known else 0,
+                mention_count=0,  # schema fields aren't mentioned in reviews
                 last_asked_date=None,
             ))
     return out
