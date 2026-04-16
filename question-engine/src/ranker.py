@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from src.models import FieldState, TaxonomyTopic
+from src.models import FieldState, TaxonomyTopic, ScoredField
 from src.scoring import missing_score, stale_score, coverage_gap_score
 
 
@@ -22,10 +22,10 @@ def rank_fields(
     review_embedding: np.ndarray | None,
     field_cluster: dict[str, str],
     weights_path: str = "config/weights.yaml",
-) -> list[tuple[FieldState, float]]:
-    """Score each field_state for `property_id` and return it sorted by descending score."""
+) -> list[ScoredField]:
+    """Score each field_state for `property_id` and return ScoredField objects sorted by descending score."""
     W = yaml.safe_load(Path(weights_path).read_text())
-    scored: list[tuple[FieldState, float]] = []
+    scored: list[ScoredField] = []
     for fs in field_states:
         if fs.eg_property_id != property_id:
             continue
@@ -37,33 +37,41 @@ def rank_fields(
             topic_id = fs.field_id.split(":", 1)[1]
             if topic_id in topic_embeddings:
                 red = max(0.0, _cosine(review_embedding, topic_embeddings[topic_id]))
-        score = (
+        composite = (
             W["w_missing"] * m
             + W["w_stale"] * s
             + W["w_coverage"] * c
             - W["w_redundancy"] * red
             + W["epsilon"]
         )
-        scored.append((fs, score))
-    return sorted(scored, key=lambda x: -x[1])
+        scored.append(ScoredField(
+            field_state=fs, composite=composite,
+            missing=m, stale=s, coverage=c, redundancy=red,
+            cluster=field_cluster.get(fs.field_id, ""),
+        ))
+    scored.sort(key=lambda x: -x.composite)
+    for i, sf in enumerate(scored):
+        sf.rank = i + 1
+    return scored
 
 
 def pick_k(
-    ranked: list[tuple[FieldState, float]],
+    ranked: list[ScoredField],
     field_cluster: dict[str, str],
     min_score_for_k2: float = 0.40,
-) -> list[FieldState]:
+) -> list[ScoredField]:
     """Pick at most 2 fields from a ranked list, skipping same-cluster duplicates for slot 2."""
     if not ranked:
         return []
-    picks = [ranked[0][0]]
-    first_cluster = field_cluster.get(ranked[0][0].field_id)
-    for fs, score in ranked[1:]:
-        if score < min_score_for_k2:
+    picks = [ranked[0]]
+    first_cluster = ranked[0].cluster or field_cluster.get(ranked[0].field_state.field_id)
+    for sf in ranked[1:]:
+        if sf.composite < min_score_for_k2:
             break
-        if field_cluster.get(fs.field_id) == first_cluster:
+        sf_cluster = sf.cluster or field_cluster.get(sf.field_state.field_id)
+        if sf_cluster == first_cluster:
             continue
-        picks.append(fs)
+        picks.append(sf)
         break
     return picks
 

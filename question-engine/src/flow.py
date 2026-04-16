@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 from datetime import date
 from pathlib import Path
 import time
@@ -112,7 +113,8 @@ class AskFlow:
         # 8. Render each picked field into a Question
         prop = self.repo.get_property(property_id)
         questions: list[Question] = []
-        for fs in picks:
+        for sf in picks:
+            fs = sf.field_state
             topic = None
             if fs.field_id.startswith("topic:"):
                 topic = self.topic_by_id.get(fs.field_id.split(":", 1)[1])
@@ -155,9 +157,17 @@ class AskFlow:
                 fs.value_known = True
                 fs.mention_count = (fs.mention_count or 0) + 1
                 fs.last_confirmed_date = today
-                # For ratings, we could update EMA here, but keep it simple:
-                # The full re-aggregation isn't needed because the answer doesn't
-                # add new sentiment data in the same format. Save for future work.
+                # Fold a numeric answer into the EMA so the UI shows a
+                # real score instead of "?".
+                if isinstance(answer.parsed_value, (int, float)):
+                    val = float(answer.parsed_value)
+                    for attr, hl in (("short_ema", 5), ("long_ema", 30)):
+                        prev = getattr(fs, attr)
+                        if prev is not None:
+                            alpha = 1 - math.exp(-math.log(2) / hl)
+                            setattr(fs, attr, alpha * val + (1 - alpha) * prev)
+                        else:
+                            setattr(fs, attr, val)
                 self.repo.upsert_field_state(fs)
 
         return answer
@@ -166,7 +176,17 @@ class AskFlow:
         """
         Re-run the three field-state builders for ONE property's worth of data.
         Much cheaper than global re-aggregation.
+
+        Answer-confirmed knowledge is preserved: if a previous follow-up answer
+        marked a field as known but the review-only rebuild would say unknown,
+        we keep the answer's value_known, EMA, and confirmed date.
         """
+        # Snapshot existing states so answer-based updates survive.
+        old_states = {
+            fs.field_id: fs
+            for fs in self.repo.list_field_states_for(property_id)
+        }
+
         properties = [self.repo.get_property(property_id)]
         reviews = self.repo.list_reviews_for(property_id)
         # review_tags filtered to this property
@@ -175,5 +195,21 @@ class AskFlow:
         rating_states = build_rating_field_states(reviews)
         schema_states = build_schema_field_states(properties, reviews=reviews)
         topic_states = build_topic_field_states(reviews, tags, self.taxonomy)
+
         for fs in rating_states + schema_states + topic_states:
+            old = old_states.get(fs.field_id)
+            if old is not None:
+                # If an answer previously confirmed this field but the
+                # review-only rebuild can't see it, preserve the answer.
+                if old.value_known and not fs.value_known:
+                    fs.value_known = True
+                    fs.short_ema = old.short_ema if fs.short_ema is None else fs.short_ema
+                    fs.long_ema = old.long_ema if fs.long_ema is None else fs.long_ema
+                # Keep the higher counts / most-recent date (reviews + answers).
+                fs.mention_count = max(fs.mention_count, old.mention_count)
+                if old.last_confirmed_date and (
+                    fs.last_confirmed_date is None
+                    or old.last_confirmed_date > fs.last_confirmed_date
+                ):
+                    fs.last_confirmed_date = old.last_confirmed_date
             self.repo.upsert_field_state(fs)
