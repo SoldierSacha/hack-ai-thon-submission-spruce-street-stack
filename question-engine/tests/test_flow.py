@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import numpy as np
 from pathlib import Path
 from src.db import Repo
-from src.models import Property, Review, RatingBreakdown, TaxonomyTopic, Question
+from src.models import Property, Review, RatingBreakdown, TaxonomyTopic, Question, SubmitResult
 from src.flow import AskFlow
 from src.taxonomy import load_taxonomy
 from src.ranker import build_field_cluster_map
@@ -36,9 +36,9 @@ def _setup_flow(tmp_path):
 def test_flow_submit_review_returns_questions(tmp_path):
     flow, repo, llm = _setup_flow(tmp_path)
     today = date(2025, 9, 1)
-    questions = flow.submit_review("p1", "", today)  # empty review, cold start
-    assert 1 <= len(questions) <= 2
-    for q in questions:
+    result = flow.submit_review("p1", "", today)  # empty review, cold start
+    assert 1 <= len(result.questions) <= 2
+    for q in result.questions:
         assert q.field_id  # has a field
         assert q.question_text  # has rendered text
 
@@ -61,8 +61,8 @@ def test_flow_submit_review_persists_with_live_source(tmp_path):
 
 def test_flow_submit_answer_scored_updates_field_state(tmp_path):
     flow, repo, llm = _setup_flow(tmp_path)
-    questions = flow.submit_review("p1", "", date(2025, 9, 1))
-    q = questions[0]
+    result = flow.submit_review("p1", "", date(2025, 9, 1))
+    q = result.questions[0]
     # Answer with a simple rating
     if q.input_type == "rating_1_5":
         ans_text = "4 out of 5"
@@ -93,8 +93,8 @@ def test_flow_submit_answer_without_prior_review_uses_fallback(tmp_path):
 
 def test_flow_submit_answer_skipped_does_not_update_state(tmp_path):
     flow, repo, llm = _setup_flow(tmp_path)
-    questions = flow.submit_review("p1", "", date(2025, 9, 1))
-    q = questions[0]
+    result = flow.submit_review("p1", "", date(2025, 9, 1))
+    q = result.questions[0]
     # Get pre-state
     before = repo.get_field_state("p1", q.field_id)
     answer = flow.submit_answer("p1", q, None, date(2025, 9, 1))  # None = skip
@@ -103,3 +103,15 @@ def test_flow_submit_answer_skipped_does_not_update_state(tmp_path):
     # mention_count and value_known unchanged by a skipped answer
     assert after.value_known == before.value_known
     assert after.mention_count == before.mention_count
+
+
+def test_flow_submit_review_returns_submit_result(tmp_path):
+    flow, repo, llm = _setup_flow(tmp_path)
+    result = flow.submit_review("p1", "The wifi was excellent and fast", date(2025, 9, 1))
+    assert isinstance(result, SubmitResult)
+    assert 1 <= len(result.questions) <= 2
+    assert result.enrichment.lang != ""
+    assert result.total_fields > 0
+    assert len(result.scored_fields) == result.total_fields
+    for sf in result.scored_fields:
+        assert sf.rank >= 1

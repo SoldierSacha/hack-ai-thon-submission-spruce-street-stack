@@ -8,6 +8,7 @@ from src.db import Repo
 from src.llm import LlmClient
 from src.models import (
     Answer, FieldState, Property, Question, Review, RatingBreakdown, TaxonomyTopic,
+    ScoredField, EnrichmentMeta, SubmitResult,
 )
 from src.enrich import detect_language, translate_to_english, tag_review
 from src.ranker import rank_fields, pick_k
@@ -42,7 +43,7 @@ class AskFlow:
 
     def submit_review(
         self, property_id: str, review_text: str, today: date
-    ) -> list[Question]:
+    ) -> SubmitResult:
         # 1. Build a synthetic review_id
         review_id = f"{property_id}:live:{int(time.time() * 1000)}"
 
@@ -54,9 +55,11 @@ class AskFlow:
 
         # 3. Compute embedding (only if we have text)
         review_embedding = None
+        embedding_dim = 0
         if text_en and text_en.strip():
             vec = self.llm.embed(text_en)
             review_embedding = np.array(vec, dtype=np.float32)
+            embedding_dim = len(vec)
 
         # 4. Tag against taxonomy
         if text_en:
@@ -92,9 +95,7 @@ class AskFlow:
         ]
         self.repo.upsert_review_tags(review_id, tag_list)
 
-        # 6. Re-aggregate field_state for this property (cheap — only 1 property)
-        #    This absorbs the new review into the state BEFORE ranking,
-        #    so the ranker sees the redundancy of what the user just talked about.
+        # 6. Re-aggregate field_state for this property
         self._reaggregate_property(property_id)
 
         # 7. Rank and pick
@@ -126,7 +127,22 @@ class AskFlow:
         # Remember which review this set of Questions belongs to.
         self._pending_review_id[property_id] = review_id
 
-        return questions
+        # 9. Build enrichment metadata
+        topics_tagged = sum(1 for v in tags.values() if v.get("mentioned"))
+        enrichment = EnrichmentMeta(
+            lang=lang,
+            translated=(lang not in ("en", "unknown") and text_en is not None),
+            embedding_dim=embedding_dim,
+            topics_tagged=topics_tagged,
+            topics_total=len(self.taxonomy),
+        )
+
+        return SubmitResult(
+            questions=questions,
+            scored_fields=ranked,
+            enrichment=enrichment,
+            total_fields=len(ranked),
+        )
 
     def submit_answer(
         self,
