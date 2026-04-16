@@ -82,11 +82,34 @@ class FieldState(BaseModel):
     mention_count: int = 0
     last_asked_date: Optional[date] = None
 
+class ScoredField(BaseModel):
+    field_state: FieldState
+    composite: float
+    missing: float
+    stale: float
+    coverage: float
+    redundancy: float
+    rank: int = 0
+    cluster: str = ""
+
 class Question(BaseModel):
     field_id: str
     question_text: str
     input_type: Literal["rating_1_5", "yes_no", "short_text"]
     reason: str                           # "why we asked" — shown in UI
+
+class EnrichmentMeta(BaseModel):
+    lang: str = "unknown"
+    translated: bool = False
+    embedding_dim: int = 0
+    topics_tagged: int = 0
+    topics_total: int = 0
+
+class SubmitResult(BaseModel):
+    questions: list[Question]
+    scored_fields: list[ScoredField]
+    enrichment: EnrichmentMeta
+    total_fields: int = 0
 
 class Answer(BaseModel):
     field_id: str
