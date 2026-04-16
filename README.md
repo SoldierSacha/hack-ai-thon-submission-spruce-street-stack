@@ -326,7 +326,7 @@ MIT, per hackathon requirement. The repo retains the default `LICENSE` file from
 
 ## Team
 
-{{team name here}}
+Spruce Street Stack
 
 ---
 
