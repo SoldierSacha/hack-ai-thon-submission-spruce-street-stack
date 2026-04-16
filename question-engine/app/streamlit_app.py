@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from src.db import Repo
 from src.llm import LlmClient
 from src.taxonomy import load_taxonomy, SCHEMA_DESCRIPTION_FIELDS
-from src.ranker import build_field_cluster_map
+from src.ranker import build_field_cluster_map, rank_fields
 from src.flow import AskFlow
 from src.models import SUB_RATING_KEYS, FieldState, ScoredField, SubmitResult
 
@@ -156,6 +156,28 @@ st.markdown("""
 .seg-m { background: #ef4444; }
 .seg-s { background: #d97706; }
 .seg-c { background: #6366f1; }
+.score-bar-wrap {
+    position: relative;
+}
+.score-bar-wrap .score-tip {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b;
+    color: #fff;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 100;
+}
+.score-bar-wrap:hover .score-tip {
+    opacity: 1;
+}
 
 /* Question card */
 .q-card {
@@ -221,6 +243,25 @@ st.markdown("""
 .enrich-trans   { background: #dbeafe; color: #2563eb; }
 .enrich-embed   { background: #ede9fe; color: #7c3aed; }
 .enrich-topics  { background: #fef3c7; color: #d97706; }
+
+/* Mentioned-topic chips */
+.topic-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    margin: 2px;
+    color: #334155;
+}
+.topic-tag .sent-pos { color: #16a34a; font-weight: 700; }
+.topic-tag .sent-neg { color: #ef4444; font-weight: 700; }
+.topic-tag .sent-neu { color: #94a3b8; }
+.topic-tag .assertion { font-style: italic; color: #64748b; font-weight: 400; }
 
 /* Section header */
 .section-hdr {
@@ -374,13 +415,15 @@ def field_status(fs: FieldState | None, today: date) -> tuple[str, str]:
 
 
 def score_bar_html(sf: ScoredField) -> str:
-    """Return HTML for a tiny stacked score bar."""
+    """Return HTML for a tiny stacked score bar with a hover tooltip."""
     total = sf.missing + sf.stale + sf.coverage + 0.001
     m_pct = sf.missing / total * 100
     s_pct = sf.stale / total * 100
     c_pct = sf.coverage / total * 100
+    tip = f"No data yet {sf.missing:.0%} · Outdated {sf.stale:.0%} · Rarely discussed {sf.coverage:.0%}"
     return (
         f"<span class='score-bar-wrap'>"
+        f"<span class='score-tip'>{tip}</span>"
         f"<span class='score-bar'>"
         f"<span class='seg-m' style='width:{m_pct:.0f}%'></span>"
         f"<span class='seg-s' style='width:{s_pct:.0f}%'></span>"
@@ -405,6 +448,72 @@ def _topic_display(fs: FieldState | None) -> tuple[str, str]:
     else:
         sentiment = "Mentioned"
     return (f"{sentiment} ({count})", "pill-known")
+
+
+def _cluster_stats(cluster: str, sf_lookup: dict[str, ScoredField], field_cluster: dict[str, str]) -> tuple[int, int]:
+    """Return (known_count, total_count) for fields in a cluster."""
+    total = known = 0
+    for fid, cl in field_cluster.items():
+        if cl == cluster:
+            total += 1
+            sf = sf_lookup.get(fid)
+            if sf and sf.field_state.value_known:
+                known += 1
+    return known, total
+
+
+def _rich_why(
+    sf: ScoredField,
+    display_slot: int,
+    all_questions: list,
+    sf_lookup: dict[str, ScoredField],
+    field_cluster: dict[str, str],
+) -> str:
+    """Build a plain-English explanation for why this question was picked."""
+    cluster = sf.cluster or ""
+    cluster_label = CLUSTER_LABELS.get(cluster, cluster.replace("_", " ").title())
+    known, total = _cluster_stats(cluster, sf_lookup, field_cluster)
+    unknown = total - known
+    fid = sf.field_state.field_id
+    key = fid.split(":", 1)[1].replace("_", " ") if ":" in fid else fid
+
+    parts = []
+
+    # Field-level reason
+    if sf.missing > 0.5:
+        parts.append(f"This property has <b>no {key} data</b> yet.")
+    elif sf.stale > 0.3:
+        parts.append(f"The <b>{key}</b> information looks <b>outdated</b> \u2014 recent reviews suggest it may have changed.")
+    elif sf.coverage > 0.5:
+        parts.append(f"Very <b>few guests</b> have commented on <b>{key}</b>.")
+    else:
+        parts.append(f"The <b>{key}</b> field has a moderate information gap.")
+
+    # Cluster-level context
+    if unknown > 0:
+        parts.append(
+            f"We\u2019re asking about <b>{cluster_label}</b> because "
+            f"{unknown} of {total} field{'s' if unknown != 1 else ''} in this category "
+            f"{'are' if unknown != 1 else 'is'} still unknown."
+        )
+
+    # Q2: explain why a different cluster was chosen
+    if display_slot == 1 and len(all_questions) >= 2:
+        q1_fid = all_questions[0][0].field_id
+        q1_sf = sf_lookup.get(q1_fid)
+        if q1_sf:
+            q1_label = CLUSTER_LABELS.get(q1_sf.cluster or "", q1_sf.cluster or "").title()
+            if q1_label != cluster_label:
+                parts.append(
+                    f"We chose a different category from question 1 (<b>{q1_label}</b>) "
+                    f"to <b>maximize new information</b>."
+                )
+
+    # Redundancy note
+    if sf.redundancy > 0.3:
+        parts.append("Your review already touched on related topics, so this was slightly de-prioritized.")
+
+    return " ".join(parts)
 
 
 # ---------- state init ----------
@@ -476,7 +585,7 @@ with picker_cols[0]:
         label_visibility="collapsed",
     )
 with picker_cols[1]:
-    if st.button("Reset", help="Clear session answers (DB untouched)", use_container_width=True):
+    if st.button("Reset", help="Clear session answers (DB untouched)", width="stretch"):
         for k in [
             "pending_questions", "answered_fields", "last_flashed_field",
             "review_text", "active_property_id", "submit_result",
@@ -488,12 +597,28 @@ with picker_cols[1]:
 prop = repo.get_property(property_id)
 today = _max_review_date(repo)
 
-# ---------- ScoredField lookup from stored SubmitResult ----------
+# ---------- ScoredField lookup ----------
+# Use SubmitResult if available (has redundancy from the review), otherwise
+# score all fields on load so the mini bars always appear.
 result: SubmitResult | None = st.session_state.get("submit_result")
 sf_lookup: dict[str, ScoredField] = {}
-if result:
+if result and result.scored_fields:
     for sf in result.scored_fields:
         sf_lookup[sf.field_state.field_id] = sf
+else:
+    _all_fs = repo.list_field_states_for(property_id)
+    if _all_fs:
+        _ranked = rank_fields(
+            property_id=property_id,
+            field_states=_all_fs,
+            today=today,
+            topic_embeddings={},
+            review_embedding=None,
+            field_cluster=build_field_cluster_map(topics),
+            weights_path=str(REPO_ROOT / "config" / "weights.yaml"),
+        )
+        for sf in _ranked:
+            sf_lookup[sf.field_state.field_id] = sf
 
 # ---------- two-column layout ----------
 left, right = st.columns([2, 3], gap="large")
@@ -529,7 +654,7 @@ with left:
 
     chart_left, chart_right = st.columns([1, 2])
     with chart_left:
-        st.plotly_chart(make_donut_chart(known, total), use_container_width=True, key="donut")
+        st.plotly_chart(make_donut_chart(known, total), width="stretch", key="donut")
         st.markdown(
             f"<div class='coverage-label'>{known} / {total} fields known</div>",
             unsafe_allow_html=True,
@@ -537,11 +662,22 @@ with left:
     with chart_right:
         st.plotly_chart(
             make_radar_chart(all_fs, topics, property_id),
-            use_container_width=True,
+            width="stretch",
             key="radar",
         )
 
-    # Sub-ratings section
+    # Score bar legend + Sub-ratings section
+    st.markdown(
+        "<div style='display:flex;gap:14px;font-size:11px;color:#64748b;margin:12px 0 4px 0;'>"
+        "<span><span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+        "background:#ef4444;margin-right:3px;vertical-align:middle;'></span>No data yet</span>"
+        "<span><span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+        "background:#d97706;margin-right:3px;vertical-align:middle;'></span>Outdated</span>"
+        "<span><span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+        "background:#6366f1;margin-right:3px;vertical-align:middle;'></span>Rarely discussed</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     st.markdown("<div class='section-hdr'>Sub-ratings</div>", unsafe_allow_html=True)
     flash_field = st.session_state.last_flashed_field
     for key in SUB_RATING_KEYS:
@@ -643,19 +779,19 @@ with right:
         )
         if voice_text:
             st.session_state.review_text = voice_text
+            st.session_state.review_input = voice_text
     else:
         st.caption("(Install `streamlit-mic-recorder` for voice input.)")
 
     review_text = st.text_area(
         "Your review (or leave blank for cold-start demo)",
-        value=st.session_state.review_text,
         key="review_input",
         height=120,
         label_visibility="collapsed",
         placeholder="Write your review here, or leave blank to see cold-start gap analysis...",
     )
 
-    if st.button("Submit review", type="primary", key="submit_review", use_container_width=True):
+    if st.button("Submit review", type="primary", key="submit_review", width="stretch"):
         with st.spinner("Analyzing review \u2014 detecting language, embedding, tagging topics, scoring gaps..."):
             result = flow.submit_review(property_id, review_text, today=today)
         st.session_state.pending_questions = [(q, False) for q in result.questions]
@@ -678,9 +814,43 @@ with right:
             unsafe_allow_html=True,
         )
 
+        # Show which topics the review mentioned
+        if result.tags:
+            topic_label_map = {t.topic_id: t.label for t in topics}
+            mentioned = {tid: tag for tid, tag in result.tags.items() if tag.mentioned}
+            if mentioned:
+                chips = []
+                for tid, tag in mentioned.items():
+                    label = topic_label_map.get(tid, tid)
+                    if tag.sentiment == 1:
+                        icon, css = "\u2191", "sent-pos"
+                    elif tag.sentiment == -1:
+                        icon, css = "\u2193", "sent-neg"
+                    else:
+                        icon, css = "\u2022", "sent-neu"
+                    assertion = (
+                        f" <span class='assertion'>\u2014 {tag.assertion}</span>"
+                        if tag.assertion else ""
+                    )
+                    chips.append(
+                        f"<span class='topic-tag'>"
+                        f"<span class='{css}'>{icon}</span> {label}{assertion}"
+                        f"</span>"
+                    )
+                st.markdown(
+                    "<div style='margin:8px 0 4px 0;font-size:12px;font-weight:600;"
+                    "color:#475569;'>Topics detected in your review:</div>"
+                    "<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;'>"
+                    + "".join(chips)
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+
     # Follow-up questions
     if st.session_state.pending_questions:
         st.markdown("<div class='section-hdr'>Follow-up questions</div>", unsafe_allow_html=True)
+        _fc = build_field_cluster_map(topics)
+        display_slot = 0
         for idx, (q, answered) in enumerate(st.session_state.pending_questions):
             if answered:
                 continue
@@ -693,26 +863,30 @@ with right:
                 unsafe_allow_html=True,
             )
 
-            # "Why this question?" expander with score breakdown
+            # "Why this question?" expander with rich explanation
             sf_match = sf_lookup.get(q.field_id) if result else None
             if sf_match:
                 with st.expander("Why this question?", expanded=False):
+                    cluster_label = CLUSTER_LABELS.get(sf_match.cluster or "", sf_match.cluster or "").title()
                     st.markdown(
                         f"<span class='rank-badge'>Rank #{sf_match.rank} of {result.total_fields}</span>"
-                        f"<span class='cluster-badge'>{(sf_match.cluster or 'Unknown').title()}</span>",
+                        f"<span class='cluster-badge'>{cluster_label}</span>",
                         unsafe_allow_html=True,
                     )
+                    explanation = _rich_why(
+                        sf_match,
+                        display_slot=display_slot,
+                        all_questions=st.session_state.pending_questions,
+                        sf_lookup=sf_lookup,
+                        field_cluster=_fc,
+                    )
                     st.markdown(
-                        f"<div class='score-detail'>"
-                        f"Score = <span class='val'>{sf_match.composite:.3f}</span><br>"
-                        f"&nbsp;&nbsp;= 0.55 \u00d7 missing(<span class='val'>{sf_match.missing:.2f}</span>)"
-                        f" + 0.25 \u00d7 stale(<span class='val'>{sf_match.stale:.2f}</span>)"
-                        f" + 0.15 \u00d7 coverage(<span class='val'>{sf_match.coverage:.2f}</span>)"
-                        f" \u2212 0.35 \u00d7 redundancy(<span class='val'>{sf_match.redundancy:.2f}</span>)"
-                        f" + 0.02"
+                        f"<div style='font-size:13px;color:#475569;line-height:1.6;padding:6px 0;'>"
+                        f"{explanation}"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+            display_slot += 1
 
             # Input widget
             input_key = f"answer_input_{idx}"
@@ -739,6 +913,7 @@ with right:
                     )
                     if voice:
                         st.session_state[f"text_{idx}"] = voice
+                        st.session_state[input_key] = voice
                 submit_text = st.text_input(
                     "Your answer",
                     value=st.session_state.get(f"text_{idx}", ""),

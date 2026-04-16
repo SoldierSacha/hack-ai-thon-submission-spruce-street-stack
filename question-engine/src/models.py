@@ -105,11 +105,17 @@ class EnrichmentMeta(BaseModel):
     topics_tagged: int = 0
     topics_total: int = 0
 
+class TagInfo(BaseModel):
+    mentioned: bool = False
+    sentiment: Optional[int] = None
+    assertion: Optional[str] = None
+
 class SubmitResult(BaseModel):
     questions: list[Question]
     scored_fields: list[ScoredField]
     enrichment: EnrichmentMeta
     total_fields: int = 0
+    tags: dict[str, TagInfo] = Field(default_factory=dict)
 
 class Answer(BaseModel):
     field_id: str

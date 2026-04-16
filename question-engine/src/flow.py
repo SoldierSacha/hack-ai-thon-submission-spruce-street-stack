@@ -8,7 +8,7 @@ from src.db import Repo
 from src.llm import LlmClient
 from src.models import (
     Answer, FieldState, Property, Question, Review, RatingBreakdown, TaxonomyTopic,
-    ScoredField, EnrichmentMeta, SubmitResult,
+    ScoredField, EnrichmentMeta, SubmitResult, TagInfo,
 )
 from src.enrich import detect_language, translate_to_english, tag_review
 from src.ranker import rank_fields, pick_k
@@ -142,6 +142,7 @@ class AskFlow:
             scored_fields=ranked,
             enrichment=enrichment,
             total_fields=len(ranked),
+            tags={tid: TagInfo(**v) for tid, v in tags.items()},
         )
 
     def submit_answer(
